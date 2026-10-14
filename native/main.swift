@@ -18,13 +18,15 @@ import Cocoa
 /// 优先 Bundle.main 推导（任何人 clone 到任意目录都可用）；
 /// 推导失败（如直接跑裸二进制调试）回退到环境变量 AI_QUOTA_BAR_HOME 或内置默认路径。
 private func locateScriptPath() -> String {
-    // .../native/AI Quota Bar.app/Contents/MacOS/xxx → 上跳 4 级 = 项目根
+    // .../native/AI Quota Bar.app/Contents/MacOS/xxx → 上跳 5 级 = 项目根
+    // （首次删除去掉的是文件名，之后依次是 MacOS/、Contents/、.app/、native/）
     if let execURL = Bundle.main.executableURL {
         let projectRoot = execURL
-            .deletingLastPathComponent()      // MacOS/
+            .deletingLastPathComponent()      // MacOS/（同时去掉可执行文件名）
             .deletingLastPathComponent()      // Contents/
             .deletingLastPathComponent()      // AI Quota Bar.app/
             .deletingLastPathComponent()      // native/
+            .deletingLastPathComponent()      // 项目根
         let candidate = projectRoot
             .appendingPathComponent("quota.1m.sh").path
         if FileManager.default.fileExists(atPath: candidate) {

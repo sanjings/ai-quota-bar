@@ -1,0 +1,25 @@
+{
+  "cursor": {
+    "enabled": true
+  },
+  "codex": {
+    "enabled": true
+  },
+  "deepseek": {
+    "enabled": true,
+    "keychainService": "deepseek-api-key",
+    "lowBalanceThreshold": 20.0
+  },
+  "display": {
+    "cacheSeconds": {
+      "fetch": 300,
+      "local": 20
+    },
+    "showBars": true,
+    "barWidth": 8
+  },
+  "thresholds": {
+    "warn": 50.0,
+    "danger": 80.0
+  }
+}

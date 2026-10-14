@@ -1,0 +1,15 @@
+# 运行时缓存
+cache/
+__pycache__/
+*.pyc
+
+# 构建产物（build.sh 生成）
+native/AI Quota Bar.app/
+native/AppIcon.icns
+native/AppIcon.iconset/
+
+# 系统杂项
+.DS_Store
+
+# 个人交接文档（含个人路径与排查记录，不开源）
+HANDOFF.md

@@ -255,10 +255,16 @@ def apply_reset_inference(codex):
         return codex
     now = time.time()
     out = dict(codex)
-    if out.get("primaryResetsAt") and now > out["primaryResetsAt"]:
-        out["primaryPct"] = 0.0
-    if out.get("secondaryResetsAt") and now > out["secondaryResetsAt"]:
-        out["secondaryPct"] = 0.0
+    for pct_key, reset_key in (
+            ("primaryPct", "primaryResetsAt"),
+            ("secondaryPct", "secondaryResetsAt")):
+        try:
+            resets_at = int(out.get(reset_key) or 0)
+        except (TypeError, ValueError):
+            resets_at = 0
+        out[reset_key] = resets_at
+        if resets_at and now > resets_at:
+            out[pct_key] = 0.0
     return out
 
 
@@ -407,6 +413,20 @@ def resolve(enabled, fetcher, cached, fresh):
 # --------------------------------------------------------------------------
 # JSON 输出（供原生菜单栏 App 消费）
 # --------------------------------------------------------------------------
+
+
+def latest_ts(*sources):
+    """最新一份成功数据的写入时间（秒）。没有成功数据时返回 None。
+
+    DeepSeek 把「未配置密钥」也以成功结果落盘（含 ts），但那不是一次
+    数据更新；只计入真正拿到余额的记录。
+    """
+    stamps = [
+        float(item.get("ts") or 0)
+        for item in sources
+        if item and item.get("error") is None
+    ]
+    return max(stamps) if stamps else None
 
 
 def build_payload(cfg, cursor, cursor_err, cursor_stale,
@@ -610,11 +630,15 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
     # 字号与「前往 xxx」行一致（不指定 size，用系统默认）。
     # 时间用 muted 灰；「· 手动刷新」不给颜色——可点项的无色段由系统渲染，
     # hover 自动反白（见 main.swift buildMenu 的 segments 分支）
+    data_ts = latest_ts(cursor, deepseek, codex)
+    if data_ts is None:
+        updated_text = "暂无数据"
+    else:
+        updated_text = "上次更新 %s" % datetime.fromtimestamp(data_ts).strftime("%H:%M:%S")
     menu.append({
         "kind": "item", "refresh": True,
         "segments": [
-            {"text": "上次更新 %s" % datetime.fromtimestamp(time.time()).strftime("%H:%M:%S"),
-             "color": COLOR["muted"]},
+            {"text": updated_text, "color": COLOR["muted"]},
             {"text": " · 手动刷新"},
         ],
     })

@@ -7,18 +7,20 @@
 设计要点
 --------
 1. 取数（fetch_*）与输出（build_payload）分离，阈值与容错规则集中在取数侧。
-2. Cursor 令牌从 Cursor 自身维护的 SQLite 只读读取，不主动刷新，避免
-   触发 refresh token 轮转导致 Cursor 登录态失效。
+2. Cursor 令牌只读用户自己写入的 Keychain 条目（cursor-access-token），
+   不读取、不解密 Cursor 的内部存储，也不主动刷新 token。
 3. 接口全部为逆向/无文档接口，字段做容错，取不到时降级显示而不是崩溃。
 4. 全部使用标准库，不依赖任何第三方包。
 """
 
+import base64
+import hashlib
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 import time
+import sqlite3
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -30,13 +32,28 @@ CACHE_DIR = os.path.join(BASE_DIR, "cache")
 CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
 STATE_PATH = os.path.join(CACHE_DIR, "state.json")
 
+CURSOR_USAGE_URL = (
+    "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
+)
+
+# Cursor 额度的凭证：由用户自己提供，存在 macOS Keychain 的这条条目里
+# （service = cursor-access-token，account = $USER）。
+#
+# 本程序不解密 Cursor 的 token，额度凭证只读用户自己的 Keychain 条目。
+# 菜单上的套餐名例外：只读 state.vscdb 里的 stripeMembershipType（如 pro），
+# 不读 accessToken。读不到具体套餐时显示「Cursor」。
+CURSOR_TOKEN_SERVICE = "cursor-access-token"
 CURSOR_DB = os.path.join(
     HOME, "Library", "Application Support", "Cursor", "User",
     "globalStorage", "state.vscdb",
 )
-CURSOR_USAGE_URL = (
-    "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
-)
+PLAN_NAMES = {
+    "free": "Cursor Free",
+    "pro": "Cursor Pro",
+    "pro_plus": "Cursor Pro+",
+    "ultra": "Cursor Ultra",
+    "team": "Cursor Team",
+}
 DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance"
 
 # Codex CLI 会话记录目录：订阅额度数据（rate_limits）写在 rollout jsonl 里，
@@ -71,15 +88,6 @@ COLOR = {
     "muted": "#888780",
     "title": "#444441",
 }
-
-PLAN_NAMES = {
-    "free": "Cursor Free",
-    "pro": "Cursor Pro",
-    "pro_plus": "Cursor Pro+",
-    "ultra": "Cursor Ultra",
-    "team": "Cursor Team",
-}
-
 
 # --------------------------------------------------------------------------
 # 配置与缓存
@@ -148,45 +156,152 @@ def http_json(url, method="GET", headers=None, payload=None, timeout=12):
 # Cursor
 # --------------------------------------------------------------------------
 
-def read_cursor_auth():
-    """只读打开 Cursor 数据库，取认证信息。绝不写入。"""
+class CredentialError(RuntimeError):
+    """凭证缺失或失效：不降级显示旧值，必须让用户看到可执行的提示。"""
+
+def read_cursor_plan_label():
+    """套餐显示名。只读 membership 代码，不读 token。读不到就返回 Cursor。"""
     if not os.path.exists(CURSOR_DB):
-        raise RuntimeError("未找到 Cursor 数据库，请确认已安装并登录 Cursor")
+        return "Cursor"
     uri = "file:" + urllib.parse.quote(CURSOR_DB) + "?mode=ro"
     try:
         connection = sqlite3.connect(uri, uri=True, timeout=5)
-    except sqlite3.Error as exc:
-        raise RuntimeError("读取 Cursor 数据库失败（%s）" % exc)
+    except sqlite3.Error:
+        return "Cursor"
     try:
-        rows = dict(connection.execute(
-            "SELECT key, value FROM ItemTable WHERE key IN "
-            "('cursorAuth/accessToken',"
-            " 'cursorAuth/refreshToken',"
-            " 'cursorAuth/stripeMembershipType')"
-        ).fetchall())
+        row = connection.execute(
+            "SELECT value FROM ItemTable WHERE key = ?",
+            ("cursorAuth/stripeMembershipType",),
+        ).fetchone()
+    except sqlite3.Error:
+        return "Cursor"
     finally:
         connection.close()
-    if not rows.get("cursorAuth/accessToken"):
-        raise RuntimeError("Cursor 未登录，请打开 Cursor 完成登录")
-    return rows
+    membership = ((row[0] if row else "") or "").strip().lower()
+    return PLAN_NAMES.get(membership, "Cursor")
+
+
+def read_cursor_token():
+    """读取用户自己配置在 Keychain 里的 Cursor token。
+
+    只读这一条 Keychain 条目，不碰 Cursor 的任何内部存储。
+    未配置时给出可执行的提示，而不是静默回退到旧值。
+    """
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password",
+             "-s", CURSOR_TOKEN_SERVICE, "-w"],
+            capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise RuntimeError("读取 Keychain 失败（%s）" % exc)
+    token = (result.stdout or "").strip()
+    if result.returncode != 0 or not token:
+        raise CredentialError("未配置 Cursor token")
+    token = normalize_token(token)
+    if token.count(".") != 2:
+        raise CredentialError("Cursor token 格式不对（应为三段式 JWT）")
+    return token
+
+
+def normalize_token(raw):
+    """规范化用户粘贴的内容，兼容三种常见形态：
+
+    - 纯 token：`eyJhbGci...`
+    - 带前缀：`Bearer eyJhbGci...`
+    - 整行复制：`authorization: Bearer eyJhbGci...`
+
+    这样用户直接从 DevTools 的 Request Headers 复制整行也能用。
+    """
+    text = (raw or "").strip().strip('"').strip("'").strip()
+    marker = text.lower().rfind("bearer ")
+    if marker >= 0:
+        text = text[marker + len("bearer "):]
+    parts = text.split()
+    return parts[0] if parts else ""
+
+
+def store_keychain(service, secret, account=None):
+    """把凭证写入 Keychain。密码走 security 的交互提示，不放进 argv。
+
+    `security -w` 带上具体密码时，ps 能看到明文。省略密码并作为最后一项时，
+    security 会在终端里询问（并要求再输一次）。这里用 pty 应答，调用方的
+    命令行里只有 service 名。
+    """
+    import pty
+    import select
+
+    account = account or os.environ.get("USER") or ""
+    secret = (secret or "").strip("\r\n")
+    if not account:
+        raise RuntimeError("无法确定当前用户")
+    if not secret:
+        raise RuntimeError("没有内容")
+
+    master, slave = pty.openpty()
+    proc = subprocess.Popen(
+        ["/usr/bin/security", "add-generic-password", "-U",
+         "-s", service, "-a", account, "-w"],
+        stdin=slave, stdout=slave, stderr=slave, close_fds=True,
+    )
+    os.close(slave)
+    # 一次是密码，一次是 retype。多写无害：进程退出后多余输入被丢弃。
+    blob = (secret + "\n").encode("utf-8")
+    try:
+        os.write(master, blob)
+        os.write(master, blob)
+        deadline = time.time() + 8
+        while time.time() < deadline and proc.poll() is None:
+            ready, _, _ = select.select([master], [], [], 0.2)
+            if ready:
+                try:
+                    os.read(master, 4096)  # 丢掉回显，绝不向外打印
+                except OSError:
+                    break
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait(timeout=2)
+            raise RuntimeError("写入 Keychain 超时")
+    finally:
+        os.close(master)
+    if proc.returncode != 0:
+        raise RuntimeError("写入 Keychain 失败（security 退出码 %s）" % proc.returncode)
+
+
+def token_expiry(token):
+    """从 JWT 载荷读 exp（只解码，不验签，也不需要任何密钥）。"""
+    try:
+        payload = token.split(".")[1]
+        payload += "=" * (-len(payload) % 4)
+        data = json.loads(base64.urlsafe_b64decode(payload).decode("utf-8"))
+        expiry = data.get("exp")
+        return int(expiry) if expiry else None
+    except Exception:
+        return None
 
 
 def fetch_cursor():
-    auth = read_cursor_auth()
-    data = http_json(
-        CURSOR_USAGE_URL,
-        method="POST",
-        headers={
-            "Authorization": "Bearer " + auth["cursorAuth/accessToken"],
-            "Connect-Protocol-Version": "1",
-        },
-        payload={},
-    )
+    token = read_cursor_token()
+    try:
+        data = http_json(
+            CURSOR_USAGE_URL,
+            method="POST",
+            headers={
+                "Authorization": "Bearer " + token,
+                "Connect-Protocol-Version": "1",
+            },
+            payload={},
+        )
+    except RuntimeError as exc:
+        # 401 通常是 token 到期或被撤销（重新登录 Cursor 会让旧 token 失效）。
+        # 给可执行的提示，而不是把上一轮的旧百分比当成真值继续显示。
+        if "401" in str(exc):
+            raise CredentialError(
+                "Cursor token 已失效（到期或在 Cursor 里重新登录过）")
+        raise
     plan = data.get("planUsage") or {}
-    membership = (auth.get("cursorAuth/stripeMembershipType") or "").strip().lower()
     return {
         "ts": time.time(),
-        "planName": PLAN_NAMES.get(membership, membership or "Cursor"),
+        "tokenExp": token_expiry(token),
         "modelsPct": float(plan.get("autoPercentUsed") or 0.0),
         "otherPct": float(plan.get("apiPercentUsed") or 0.0),
         # 官方未下发时保持 None：下游据此不显示合计，而不是兜底成 0.0%
@@ -198,12 +313,26 @@ def fetch_cursor():
         "includedSpend": int(plan.get("includedSpend") or 0),
         "planLimit": int(plan.get("limit") or 0),
         "bonusSpend": int(plan.get("bonusSpend") or 0),
+        "credId": cred_id(token),
     }
 
 
 # --------------------------------------------------------------------------
 # DeepSeek
 # --------------------------------------------------------------------------
+
+def cred_id(secret):
+    """凭证指纹。只放进本地缓存用来判断「还是不是这一份」，不写 token 本身。"""
+    return hashlib.sha256(secret.encode("utf-8")).hexdigest()
+
+
+def current_cred_id(reader):
+    """当前 Keychain 凭证的指纹。缺失或读失败返回 None，缓存不得当成新鲜。"""
+    try:
+        return cred_id(reader())
+    except CredentialError:
+        return None
+
 
 def read_deepseek_key(service):
     try:
@@ -212,23 +341,100 @@ def read_deepseek_key(service):
             capture_output=True, text=True, timeout=8,
         )
     except Exception as exc:
-        return None, "无法调用 Keychain（%s）" % exc
+        raise CredentialError("无法调用 Keychain（%s）" % exc)
     if result.returncode != 0:
-        return None, "未在 Keychain 中配置密钥"
+        raise CredentialError("未配置密钥")
     key = (result.stdout or "").strip()
     if not key:
-        return None, "Keychain 中的密钥为空"
-    return key, None
+        raise CredentialError("密钥为空")
+    return key
+
+
+def verify_cursor_token(raw):
+    """校验一个「待配置」的 token（CLI 脚本与 App 配置弹窗共用同一实现）。
+
+    只发一次请求，返回可序列化结果；不写 Keychain、不碰缓存，
+    所以校验失败不会覆盖掉当前仍可用的凭证。
+    """
+    token = normalize_token(raw)
+    if not token:
+        return {"ok": False, "error": "没有读到内容，请粘贴 token"}
+    if token.count(".") != 2:
+        return {"ok": False, "error": "格式不对：token 应是三段式 JWT（含两个点）"}
+    try:
+        data = http_json(
+            CURSOR_USAGE_URL,
+            method="POST",
+            headers={
+                "Authorization": "Bearer " + token,
+                "Connect-Protocol-Version": "1",
+            },
+            payload={},
+        )
+    except RuntimeError as exc:
+        if "401" in str(exc):
+            return {"ok": False, "error": "token 无效或已过期（HTTP 401）"}
+        return {"ok": False, "error": str(exc)}
+    plan = data.get("planUsage") or {}
+    models = float(plan.get("autoPercentUsed") or 0.0)
+    others = float(plan.get("apiPercentUsed") or 0.0)
+    expiry = token_expiry(token)
+    # summary 由这里拼好，Swift 端只负责显示——避免两处格式化逻辑不一致
+    summary = "Cursor Models %.1f%% · Others %.1f%%" % (models, others)
+    if expiry:
+        summary += "\n有效期至 %s" % time.strftime("%Y-%m-%d", time.localtime(expiry))
+    return {
+        "ok": True,
+        "exp": expiry,
+        "modelsPct": models,
+        "otherPct": others,
+        "summary": summary,
+    }
+
+
+def verify_deepseek_key(raw):
+    """校验待配置的 DeepSeek Key（与 Cursor 的校验同构：只验证，不写库）。"""
+    key = normalize_token(raw)  # 同一个规范化：去引号/空白，取第一段
+    if not key:
+        return {"ok": False, "error": "没有读到内容，请粘贴 API Key"}
+    if not key.startswith("sk-"):
+        return {"ok": False, "error": "格式不对：DeepSeek 的 Key 以 sk- 开头"}
+    try:
+        data = http_json(DEEPSEEK_BALANCE_URL,
+                         headers={"Authorization": "Bearer " + key})
+    except RuntimeError as exc:
+        if "401" in str(exc):
+            return {"ok": False, "error": "密钥无效（HTTP 401）"}
+        return {"ok": False, "error": str(exc)}
+    infos = data.get("balance_infos") or []
+    info = infos[0] if infos else {}
+    available = bool(data.get("is_available"))
+    symbol = currency_symbol((info.get("currency") or "").upper())
+    summary = "余额 %s%s" % (symbol, info.get("total_balance") or "0")
+    if not available:
+        summary += "（余额不足，已无法发起请求）"
+    return {
+        "ok": True,
+        "total": info.get("total_balance") or "",
+        "available": available,
+        "summary": summary,
+    }
 
 
 def fetch_deepseek(service):
-    key, error = read_deepseek_key(service)
-    if error:
-        return {"ts": time.time(), "error": error}
-    data = http_json(
-        DEEPSEEK_BALANCE_URL,
-        headers={"Authorization": "Bearer " + key},
-    )
+    key = read_deepseek_key(service)
+    try:
+        data = http_json(
+            DEEPSEEK_BALANCE_URL,
+            headers={"Authorization": "Bearer " + key},
+        )
+    except RuntimeError as exc:
+        # 401 = 密钥被删除/重建，或账号异常。这属于凭证问题，不能拿上一次的
+        # 余额继续显示（那会让人以为钱还在）。
+        if "401" in str(exc):
+            raise CredentialError(
+                "DeepSeek 密钥已失效（可能被删除或重建）：见 README「配置 DeepSeek 密钥」")
+        raise
     infos = data.get("balance_infos") or []
     info = infos[0] if infos else {}
     return {
@@ -239,6 +445,7 @@ def fetch_deepseek(service):
         "total": info.get("total_balance") or "",
         "granted": info.get("granted_balance") or "",
         "toppedUp": info.get("topped_up_balance") or "",
+        "credId": cred_id(key),
     }
 
 
@@ -397,17 +604,23 @@ def text_width(s, size):
 # --------------------------------------------------------------------------
 
 def resolve(enabled, fetcher, cached, fresh):
-    """返回 (data, error, stale)。fresh 由调用方按该 provider 的 TTL 判断。"""
+    """返回 (data, error, stale, drop_cache)。fresh 由调用方按该 provider 的 TTL 判断。
+
+    凭证类错误（未配置 / 已失效）不降级，并要求丢掉旧缓存：否则 TTL 内下一轮
+    仍会把上一次成功的数字当成本次结果。网络失败才保留缓存并标 stale。
+    """
     if not enabled:
-        return None, None, False
+        return None, None, False, False
     if fresh and cached:
-        return cached, None, False
+        return cached, None, False, False
     try:
-        return fetcher(), None, False
+        return fetcher(), None, False, False
+    except CredentialError as exc:
+        return None, str(exc), False, True
     except Exception as exc:
         if cached:
-            return cached, str(exc), True
-        return None, str(exc), False
+            return cached, str(exc), True, False
+        return None, str(exc), False, False
 
 
 # --------------------------------------------------------------------------
@@ -427,6 +640,20 @@ def latest_ts(*sources):
         if item and item.get("error") is None
     ]
     return max(stamps) if stamps else None
+
+
+def short_reason(text):
+    """把错误文案压成一行短标签：去掉数据源名字前缀与括号里的解释。
+
+    用于「xxx 不可用 · 未配置 token」这类标题行——保留诊断信息但不占一整行。
+    """
+    text = (text or "").strip()
+    # 去掉数据源名字：避免「Cursor 不可用 · 未配置 Cursor token」这种重复
+    text = text.replace("Cursor ", "").replace("DeepSeek ", "")
+    for sep in ("（", "(", "："):
+        if sep in text:
+            text = text.split(sep)[0]
+    return text.strip() or "不可用"
 
 
 def build_payload(cfg, cursor, cursor_err, cursor_stale,
@@ -458,8 +685,19 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
             "value": "%d%%/%d%%" % (int(round(models_pct)), int(round(other_pct))),
             "color": COLOR[level(max(models_pct, other_pct), warn, danger)],
         })
+    elif cfg["cursor"]["enabled"] and cursor_err:
+        # 凭证缺失/失效：显示占位符而不是空着——菜单栏上少一整列会让人以为
+        # 是程序坏了；但也不给出任何看着像真实额度的数字。
+        columns.append({
+            "label": "Cursor",
+            "value": "--",
+            "color": COLOR["danger"],
+        })
 
+    # 余额告警有两个来源：低于阈值（可继续用但该充值），以及官方 is_available
+    # 明确为 false（余额已不足以发起请求）。后者比阈值更权威，两者都要显示成异常色。
     ds_low = False
+    ds_unavailable = bool(deepseek) and deepseek.get("available") is False
     if deepseek and deepseek.get("total"):
         try:
             ds_low = float(deepseek["total"]) <= low_balance
@@ -468,14 +706,21 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
         columns.append({
             "label": "DeepSeek",
             "value": "%s%s" % (currency_symbol(deepseek.get("currency")), deepseek["total"]),
-            "color": COLOR["danger"] if ds_low else COLOR["ok"],
+            "color": COLOR["danger"] if (ds_low or ds_unavailable) else COLOR["ok"],
+        })
+    elif cfg["deepseek"]["enabled"] and (deepseek_err or (deepseek or {}).get("error")):
+        # 同 Cursor：不可用时给占位符，避免整列消失被误判为程序故障
+        columns.append({
+            "label": "DeepSeek",
+            "value": "--",
+            "color": COLOR["danger"],
         })
 
     # ---------- 下拉菜单 ----------
     menu = []
 
     def item(title, color=None, mono=False, size=None, href=None, refresh=False,
-             tabs=None, tabsRight=None):
+             tabs=None, tabsRight=None, action=None, service=None):
         entry = {"kind": "item", "title": title}
         if color:
             entry["color"] = color
@@ -496,6 +741,13 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
             # 右对齐 tab 停靠位（pt）：\t 后的文字以此位置为右缘，
             # 用于「重置时间 … 倒计时」一行的左右分列
             entry["tabsRight"] = tabsRight
+        if action:
+            # 应用内动作（如配置凭证）：Swift 端把 action 映射到选择器，
+            # 与 href（打开链接）/ refresh（重取数据）并列
+            entry["action"] = action
+        if service:
+            # 动作的附加参数（只有 DeepSeek 需要：Keychain 服务名可配置）
+            entry["service"] = service
         return entry
 
     def sub(title, color=None, mono=False, size=None, href=None, tabs=None):
@@ -556,7 +808,7 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
         # 15+103.3=118.3 < 125；百分比 48.2pt，125+48.2=173.2 < 178。
         tabs = [15, 125, 178]
         header = {"kind": "item", "mono": True, "tabs": tabs, "segments": [
-            {"text": cursor.get("planName") or "Cursor", "color": None},
+            {"text": read_cursor_plan_label(), "color": None},
         ]}
         if total_pct is not None:
             total_color = COLOR[level(total_pct, warn, danger)]
@@ -583,21 +835,55 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
                 color=COLOR["muted"], size=12, tabs=[15]))
             menu.append(item("\t重置倒计时  %s" % countdown(cursor["cycleEnd"]),
                              color=COLOR["muted"], size=12, tabs=[15]))
+        # token 是自己配置的，会过期（约两个月）或被重新登录作废：
+        # 到期前 7 天开始用警示色，避免某天突然失效却不知道为什么。
+        expiry = cursor.get("tokenExp")
+        if expiry:
+            left = expiry - time.time()
+            text = fmt_clock(expiry)
+            if left <= 0:
+                menu.append(item("\tToken 已过期  %s" % text,
+                                 color=COLOR["danger"], size=12, tabs=[15]))
+                menu.append(sub("\t点「更换 token」更新",
+                                color=COLOR["danger"], size=12, tabs=[15]))
+            elif left < 7 * 86400:
+                menu.append(item("\tToken %d 天后过期  %s" % (left // 86400, text),
+                                 color=COLOR["warn"], size=12, tabs=[15]))
+            else:
+                menu.append(item("\tToken 有效至  %s" % text,
+                                 color=COLOR["muted"], size=12, tabs=[15]))
+        # 已配置时也留一个入口：换账号/换 token 不必先回终端删条目
+        menu.append(item("\t更换 token", action="configure-cursor-token", tabs=[15]))
     elif cursor_err:
         menu.append(separator())
-        menu.append(item("Cursor 读取失败", color=COLOR["danger"]))
-        menu.append(sub(cursor_err, color=COLOR["muted"], size=12))
-        menu.append(sub("请在 Cursor 中激活一次后重试", color=COLOR["muted"], size=12))
+        # 两行说清：标题行带简短原因，第二行是唯一可点的动作。
+        # 两行都不缩进（不用 sub），左边缘与相邻区块对齐。
+        menu.append({
+            "kind": "item",
+            "segments": [
+                {"text": "Cursor 不可用", "color": COLOR["danger"]},
+                {"text": " · " + short_reason(cursor_err), "color": COLOR["muted"]},
+            ],
+        })
+        menu.append(item("配置 Cursor token", action="configure-cursor-token"))
 
     if cfg["deepseek"]["enabled"]:
         menu.append(separator())
-        if not deepseek:
-            menu.append(item("DeepSeek 读取失败", color=COLOR["danger"]))
-            if deepseek_err:
-                menu.append(sub(deepseek_err, color=COLOR["muted"], size=12))
-        elif deepseek.get("error"):
-            menu.append(item("DeepSeek · %s" % deepseek["error"], color=COLOR["muted"]))
-            menu.append(sub("见 README 配置密钥", color=COLOR["muted"], size=12))
+        # 两种"凭证不可用"合并展示：fetch 抛错（deepseek is None）与 fetch 返回
+        # 带 error 的字典（Keychain 未配置）。两处文案与入口保持一致。
+        ds_error = deepseek_err or (deepseek or {}).get("error")
+        if not deepseek and not ds_error:
+            ds_error = "读取失败"
+        if ds_error:
+            menu.append({
+                "kind": "item",
+                "segments": [
+                    {"text": "DeepSeek 不可用", "color": COLOR["danger"]},
+                    {"text": " · " + short_reason(ds_error), "color": COLOR["muted"]},
+                ],
+            })
+            menu.append(item("配置 DeepSeek 密钥", action="configure-deepseek-key",
+                             service=cfg["deepseek"]["keychainService"]))
         else:
             symbol = currency_symbol(deepseek.get("currency"))
             # 「DeepSeek」用系统默认色（同「前往」行）；「余额」与数值在低预警时一起变红
@@ -606,18 +892,24 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
                 "segments": [
                     {"text": "DeepSeek  ", "color": None},
                     {"text": "余额",
-                     "color": COLOR["danger"] if ds_low else COLOR["title"]},
+                     "color": COLOR["danger"] if (ds_low or ds_unavailable) else COLOR["title"]},
                     {"text": "  %s%s" % (symbol, deepseek.get("total") or "--"),
-                     "color": COLOR["danger"] if ds_low else COLOR["ok"]},
+                     "color": COLOR["danger"] if (ds_low or ds_unavailable) else COLOR["ok"]},
                 ],
             })
             menu.append(item("\t赠金余额 %s%s · 充值余额 %s%s" % (
                 symbol, deepseek.get("granted") or "0",
                 symbol, deepseek.get("toppedUp") or "0"),
                 color=COLOR["muted"], mono=True, size=12, tabs=[15]))
+            if ds_unavailable:
+                # 官方 is_available=false：余额已不足以发起请求，比"低于阈值"更严重
+                menu.append(item("\t余额不足，已无法发起请求",
+                                 color=COLOR["danger"], size=12, tabs=[15]))
             menu.append(item("\t去充值",
                              href="https://platform.deepseek.com/top_up",
                              tabs=[15]))
+            menu.append(item("\t更换密钥", action="configure-deepseek-key",
+                             service=cfg["deepseek"]["keychainService"], tabs=[15]))
 
     menu.append(separator())
     if cursor_stale or deepseek_stale or codex_stale:
@@ -652,6 +944,29 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
 
 
 def main():
+    # 校验模式：凭证从 stdin 读入，输出一行 JSON。
+    # App 的配置弹窗与 scripts/*.sh 都走这里，避免出现两套判断。
+    argv = sys.argv[1:]
+    for flag, verifier in (("--verify-cursor-token", verify_cursor_token),
+                           ("--verify-deepseek-key", verify_deepseek_key)):
+        if flag in argv:
+            result = verifier(sys.stdin.read())
+            sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+            return
+    if "--store-keychain" in argv:
+        idx = argv.index("--store-keychain")
+        try:
+            service = argv[idx + 1]
+        except IndexError:
+            sys.stderr.write("缺少 Keychain 服务名\n")
+            sys.exit(2)
+        try:
+            store_keychain(service, sys.stdin.read())
+        except Exception as exc:
+            sys.stderr.write("%s\n" % exc)
+            sys.exit(1)
+        return
+
     cfg = load_config()
     state = load_state()
     now = time.time()
@@ -661,25 +976,46 @@ def main():
     # 扫本地文件）TTL 短。App 每 60s 调用一次时 fetch 档命中缓存不发请求。
     def is_fresh(key, local=False):
         cached = state.get(key) or {}
+        # 带 error 的条目一律不算新鲜：它不是"成功的取数结果"，缓存它会让
+        # 「刚配置好凭证」也要等一个 TTL 才生效（实测卡了 5 分钟）。
+        if cached.get("error"):
+            return False
+        # 网络缓存只在「还是同一份凭证」时有效。Keychain 被删、换掉或读失败
+        # 时必须立刻重取，否则 TTL 内会一直显示上一份成功数字。
+        # 同一份凭证被服务端 401 拒绝，要等这次缓存过期后的下一次请求才能发现。
+        if not local:
+            if key == "cursor":
+                current = current_cred_id(read_cursor_token)
+            else:
+                service = cfg["deepseek"]["keychainService"]
+                current = current_cred_id(lambda: read_deepseek_key(service))
+            if not current or cached.get("credId") != current:
+                return False
         limit = ttl["local"] if local else ttl["fetch"]
         return (now - float(cached.get("ts") or 0)) < limit
 
-    cursor, cursor_err, cursor_stale = resolve(
+    cursor, cursor_err, cursor_stale, drop_cursor = resolve(
         bool(cfg["cursor"]["enabled"]), fetch_cursor, state.get("cursor"),
         is_fresh("cursor"))
-    deepseek, deepseek_err, deepseek_stale = resolve(
+    deepseek, deepseek_err, deepseek_stale, drop_deepseek = resolve(
         bool(cfg["deepseek"]["enabled"]),
         lambda: fetch_deepseek(cfg["deepseek"]["keychainService"]),
         state.get("deepseek"), is_fresh("deepseek"))
-    codex, codex_err, codex_stale = resolve(
+    codex, codex_err, codex_stale, drop_codex = resolve(
         bool(cfg["codex"]["enabled"]), fetch_codex, state.get("codex"),
         is_fresh("codex", local=True))
     # 缓存命中路径也要过重置推断（否则 TTL 内仍显示过期百分比）
     codex = apply_reset_inference(codex)
 
-    # 独立落盘各 provider 的最新成功数据（含各自 ts，供下次判新鲜度）
-    for key, data in (("cursor", cursor), ("deepseek", deepseek), ("codex", codex)):
-        if data is not None:
+    # 凭证失效时丢掉旧缓存。网络失败才保留上一次成功数据，供降级显示。
+    # 带 error 的结果（如未配置密钥）不写入，避免挡住刚配好的凭证。
+    for key, data, drop in (
+            ("cursor", cursor, drop_cursor),
+            ("deepseek", deepseek, drop_deepseek),
+            ("codex", codex, drop_codex)):
+        if drop:
+            state.pop(key, None)
+        elif data is not None and not data.get("error"):
             state[key] = data
     state.pop("ts", None)
     save_state(state)

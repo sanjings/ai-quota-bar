@@ -67,6 +67,12 @@ private struct MenuEntry: Decodable {
     let mono: Bool?
     let size: Int?
     let href: String?
+    /// 应用内动作名（如 configure-cursor-token）。由 buildMenu 映射到选择器，
+    /// 与 href（打开链接）/ refresh（重取数据）并列，见下。
+    let action: String?
+    /// 动作的附加参数：目前用于 DeepSeek 的 Keychain 服务名
+    /// （对应 config.json 的 deepseek.keychainService，改配置无需重编译）
+    let service: String?
     let refresh: Bool?
     /// tab 停靠位（pt）：title 里的 \t 会吸附到这些位置，用于菜单多列对齐。
     /// 空格补齐对 CJK 无效（苹方回退宽度 ≠ 2×等宽 ASCII），tab 是系统级对齐。
@@ -148,6 +154,8 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
     private var timer: Timer?
     private var payload: Payload?
     private var isFetching = false
+    /// 配置弹窗里的输入框（「从剪贴板填入」按钮需要引用它）
+    private weak var tokenField: NSSecureTextField?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -339,6 +347,19 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
             } else if entry.refresh == true {
                 item.target = target
                 item.action = #selector(refresh)
+            } else if let action = entry.action {
+                item.target = target
+                switch action {
+                case "configure-cursor-token":
+                    item.action = #selector(configureCursorToken)
+                case "configure-deepseek-key":
+                    item.action = #selector(configureDeepSeekKey(_:))
+                    if let service = entry.service {
+                        item.representedObject = service
+                    }
+                default:
+                    break
+                }
             }
 
             // 只有带动作的项才可点击：无动作的信息行禁用后不参与 hover
@@ -359,6 +380,201 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
         if let url = sender.representedObject as? URL {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    // MARK: - 菜单内配置凭证（Cursor token / DeepSeek 密钥共用）
+
+    private struct VerifyResult: Decodable {
+        let ok: Bool
+        let error: String?
+        /// 成功摘要由 Python 侧拼好：两个数据源的字段不同（百分比 vs 余额），
+        /// 格式化集中在一处，Swift 只负责显示
+        let summary: String?
+    }
+
+    /// 校验结果：成功带数据，失败带可直接展示的中文原因
+    private enum VerifyOutcome {
+        case ok(VerifyResult)
+        case failed(String)
+    }
+
+    /// 一种可配置凭证的静态描述：两个数据源只差文案、Keychain 服务名与校验参数
+    private struct CredentialSpec {
+        let title: String
+        let hint: String
+        let placeholder: String
+        let service: String
+        let verifyFlag: String
+        /// 出现在提示语里的名词（"token" / "密钥"）
+        let noun: String
+    }
+
+    private static let cursorSpec = CredentialSpec(
+        title: "配置 Cursor token",
+        hint: """
+        ① 在 Cursor 里按 ⌘⇧P 打开命令面板，输入 Toggle Developer Tools，回车
+        ② 切到 Network 面板，过滤框输入 cursor.sh
+        ③ 触发一次请求：点右上角齿轮打开 Cursor Settings（或点左下角账户头像），
+           直到列表里出现 api2.cursor.sh
+        ④ 点开它 → Headers → Request Headers → 复制
+           authorization: Bearer eyJ... 整行，粘贴到下面
+
+        看不到请求时：命令面板执行 Reload Window 后重试。
+
+        token 等同登录凭证，只保存在本机 Keychain，约 2 个月后需更新。
+        """,
+        placeholder: "eyJ...（纯 token 或整行 authorization 都可以）",
+        service: "cursor-access-token",
+        verifyFlag: "--verify-cursor-token",
+        noun: "token")
+
+    private static let deepseekSpec = CredentialSpec(
+        title: "配置 DeepSeek 密钥",
+        hint: """
+        在 https://platform.deepseek.com/api_keys 创建一个 API Key
+        （以 sk- 开头），粘贴到下面。
+
+        余额是账户级的，同一账号下任意一个 Key 查询结果都相同；
+        建议用专用 Key，便于将来单独撤销。密钥不会过期。
+        """,
+        placeholder: "sk-...",
+        service: "deepseek-api-key",
+        verifyFlag: "--verify-deepseek-key",
+        noun: "密钥")
+
+    @objc private func configureCursorToken() {
+        configureCredential(Self.cursorSpec, service: Self.cursorSpec.service)
+    }
+
+    /// DeepSeek 的服务名以菜单项带来的为准（对应 config.json 的
+    /// deepseek.keychainService），这样改配置不需要重编译
+    @objc private func configureDeepSeekKey(_ sender: NSMenuItem) {
+        let service = (sender.representedObject as? String) ?? Self.deepseekSpec.service
+        configureCredential(Self.deepseekSpec, service: service)
+    }
+
+    /// 弹窗粘贴 → 校验 → 写 Keychain → 刷新菜单。
+    /// 校验放在写入之前，失败不会覆盖掉当前仍可用的凭证。
+    private func configureCredential(_ spec: CredentialSpec, service: String) {
+        let alert = NSAlert()
+        alert.messageText = spec.title
+        alert.informativeText = spec.hint
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 56))
+        let field = NSSecureTextField(frame: NSRect(x: 0, y: 28, width: 420, height: 24))
+        field.placeholderString = spec.placeholder
+        container.addSubview(field)
+        tokenField = field
+
+        let pasteButton = NSButton(title: "从剪贴板填入",
+                                   target: self,
+                                   action: #selector(fillTokenFromClipboard))
+        pasteButton.bezelStyle = .rounded
+        pasteButton.frame = NSRect(x: 0, y: 0, width: 130, height: 24)
+        container.addSubview(pasteButton)
+
+        alert.accessoryView = container
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+
+        let secret = Self.normalizeToken(field.stringValue)
+        guard !secret.isEmpty else {
+            showMessage("没有输入内容", "请粘贴\(spec.noun)后重试。", style: .warning)
+            return
+        }
+
+        // 1) 先校验：不写入、不改缓存
+        switch verify(secret, flag: spec.verifyFlag) {
+        case .failed(let message):
+            showMessage("\(spec.noun)校验失败", message, style: .warning)
+        case .ok(let result):
+            // 2) 校验通过才落库
+            if let writeError = writeToKeychain(secret, service: service) {
+                showMessage("写入 Keychain 失败", writeError, style: .critical)
+                return
+            }
+            showMessage("配置成功", result.summary ?? "已保存。")
+            refresh()
+        }
+    }
+
+    @objc private func fillTokenFromClipboard() {
+        guard let text = NSPasteboard.general.string(forType: .string) else { return }
+        tokenField?.stringValue = text
+    }
+
+    private func verify(_ secret: String, flag: String) -> VerifyOutcome {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: scriptPath)
+        process.arguments = [flag]
+        let input = Pipe()
+        let out = Pipe()
+        process.standardInput = input
+        process.standardOutput = out
+        process.standardError = Pipe()
+        do {
+            try process.run()
+        } catch {
+            return .failed("无法执行取数脚本：\(error.localizedDescription)")
+        }
+        // 先写满 stdin 再关，避免对方阻塞在读 stdin 上
+        input.fileHandleForWriting.write(Data(secret.utf8))
+        try? input.fileHandleForWriting.close()
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard let result = try? JSONDecoder().decode(VerifyResult.self, from: data) else {
+            return .failed("脚本返回了无法解析的结果")
+        }
+        return result.ok ? .ok(result) : .failed(result.error ?? "未知错误")
+    }
+
+    private static func normalizeToken(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let range = text.range(of: "bearer ", options: [.caseInsensitive, .backwards]) {
+            text = String(text[range.upperBound...])
+        }
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .components(separatedBy: .whitespacesAndNewlines).first ?? ""
+    }
+
+    /// 写 Keychain。密码从 stdin 交给脚本，由脚本用 security 的交互提示写入，
+    /// 不把明文放进 argv（ps 看不到）。条目仍由 security 创建，之后 Python
+    /// 再用 security 读取时不会弹出授权框。
+    private func writeToKeychain(_ secret: String, service: String) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: scriptPath)
+        process.arguments = ["--store-keychain", service]
+        let input = Pipe()
+        let err = Pipe()
+        process.standardInput = input
+        // 丢掉 stdout。挂上管道却不读，输出一多会把子进程堵死。
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = err
+        do {
+            try process.run()
+        } catch {
+            return "无法执行取数脚本：\(error.localizedDescription)"
+        }
+        input.fileHandleForWriting.write(Data(secret.utf8))
+        try? input.fileHandleForWriting.close()
+        let data = err.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        guard process.terminationStatus != 0 else { return nil }
+        let text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return text.isEmpty ? "写入 Keychain 失败（退出码 \(process.terminationStatus)）" : text
+    }
+
+    private func showMessage(_ title: String, _ body: String,
+                             style: NSAlert.Style = .informational) {
+        let alert = NSAlert()
+        alert.alertStyle = style
+        alert.messageText = title
+        alert.informativeText = body
+        alert.addButton(withTitle: "好")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
     }
 }
 

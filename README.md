@@ -7,22 +7,39 @@ ChatGPT Plus  Cursor  DeepSeek    ← 菜单栏常驻，标签+数值两行显�
 4%/4%         92%/42% ¥2.79
 ```
 
-点击菜单栏项可展开详情：额度进度条、重置倒计时、DeepSeek 充值/赠送拆分、各服务用量面板直达链接。
+两列百分比的含义：
+
+| 标签 | 左边 | 右边 |
+|---|---|---|
+| ChatGPT Plus | 5 小时额度已用 | 周额度已用 |
+| Cursor | Cursor Models 已用 | Others Models 已用 |
+| DeepSeek | 账户余额（不是百分比） | |
+
+点击菜单栏项可展开详情：额度进度条、重置倒计时、DeepSeek 充值/赠送拆分、各服务用量面板直达链接。三个数据源互相独立，只配自己要用的即可。没配 Cursor token、或本机没有 Codex 会话时，对应那一列会显示「不可用」或读取失败，其余照常，这不是安装失败。
 
 ---
 
 ## 快速开始
 
 ```bash
-git clone <本仓库>
+git clone https://github.com/sanjings/ai-quota-bar.git
 cd ai-quota-bar
 bash native/build.sh          # 编译 + 打包
 open native/"AI Quota Bar.app"
 ```
 
-> 要求：macOS 12+，Xcode 命令行工具（swiftc）与 python3（系统自带即可）。
-> App 启动时自动定位仓库内的 `quota.1m.sh`（相对 bundle 推导），
-> 也可用环境变量 `AI_QUOTA_BAR_HOME` 指定项目根目录。
+然后在菜单栏点开这一项，按菜单里的入口配置（也可以用下面的命令行，效果相同）：
+
+```bash
+bash scripts/cursor-token.sh                                         # Cursor，可选
+security add-generic-password -U -s deepseek-api-key -a "$USER" -w   # DeepSeek，可选
+```
+
+> 要求：macOS 12+，Xcode 命令行工具（`swiftc`）与 python3（系统自带即可）。
+> **不要把 `AI Quota Bar.app` 拷走。** 它靠自己在仓库里的位置找到 `quota.1m.sh`。
+> 若必须放到别的目录，先设置 `AI_QUOTA_BAR_HOME` 为仓库根目录再启动。
+> ChatGPT 额度不用配凭证，读的是本机 Codex CLI 会话；Cursor / DeepSeek 的凭证说明见下文。
+> 凭证只进本机 Keychain，边界见 [SECURITY.md](SECURITY.md)。
 
 **开机自启**：系统设置 → 通用 → 登录项，把 `AI Quota Bar.app` 拖入列表。
 
@@ -39,12 +56,22 @@ pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar"
 | 项目 | 获取方式 | 凭证 | 说明 |
 |---|---|---|---|
 | ChatGPT 额度 | **本地解析** `~/.codex/sessions` 会话记录 | 无需（订阅登录态由 Codex CLI 维护） | 无网络请求；数据随 Codex 任务结束更新 |
-| Cursor 双池额度 | `api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage` | Cursor 客户端本地 token（自动只读） | 未公开接口，已做容错 |
+| Cursor 双池额度 | `api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage` | macOS Keychain，service = `cursor-access-token`（**需手动配置一次**） | 未公开接口，已做容错 |
 | DeepSeek 余额 | `api.deepseek.com/user/balance`（官方公开接口） | macOS Keychain 中的 API Key | |
 
-**Cursor 的 token 只读取自 Cursor 自身维护的数据库，本程序不会主动刷新。**
-这是有意为之：refresh token 存在轮转机制，若抢先刷新而未同步回 Cursor，
-可能导致 Cursor 登录态失效。若接口返回 401，在 Cursor 里激活一次即可恢复。
+**关于 Cursor 凭证的边界（重要）**：额度用的 token **不从 Cursor 内部存储读取，也不解密**。
+你自己从客户端取出，存进自己的 Keychain 条目，程序只读这一条。
+Keychain 里的 `Cursor Safe Storage` 不碰。
+
+菜单标题上的套餐名是唯一例外：只读 `state.vscdb` 里的 `stripeMembershipType`
+（`pro`、`ultra` 这种代码，不是 token）。读不到具体套餐时显示「Cursor」。
+
+这样做的取舍很明确：**放弃"零配置自动读取"，换取代码里没有任何绕过第三方应用
+凭据保护的部分**——可审计、可长期维护，也不会因为 Cursor 改加密方案就整体失效。
+代价是 token 约 2 个月到期，需要重新配置一次（见下节）。
+
+**Cursor 请求不会触发 token 刷新**：程序只用不换，避免 refresh token 轮转把
+Cursor 登录态踢掉。若在 Cursor 里退出登录/重新登录，旧 token 会失效，需重新配置。
 
 **ChatGPT 数据的边界**：额度数据（`rate_limits`）只在 Codex 任务结束时写入本地
 会话文件，不是实时接口——不用 Codex 时数据停留在最后一次任务；窗口重置时刻
@@ -78,18 +105,76 @@ pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar"
 
 ### 配置 DeepSeek 密钥
 
-密钥存入 macOS Keychain，不落明文文件：
+密钥存入 macOS Keychain，不落明文文件。**两种方式，效果相同：**
+
+**① 在菜单栏里配置（推荐）** —— 下拉菜单点「配置 DeepSeek 密钥」，粘贴后保存。
+保存前会先调 `/user/balance` 验证，**通过才写入**；失败只提示原因（如「密钥无效（HTTP 401）」），
+不会覆盖原有可用密钥。配置成功后保留「更换密钥」入口。
+
+**② 命令行**：
 
 ```bash
 security add-generic-password -U -s deepseek-api-key -a "$USER" -w
 ```
 
 命令会提示输入密钥（**输入时不回显**，属正常）。`-U` 表示已存在时覆盖。
+注意这条路**不做校验**——粘错了要等下一轮刷新才会报「密钥已失效」。
 
-未配置时，下拉菜单会显示「未在 Keychain 中配置密钥」，**不影响其余部分正常使用**。
+未配置时，下拉菜单会显示「DeepSeek 不可用 · 未配置密钥」并给出可点击的配置入口，**不影响其余部分正常使用**。
+DeepSeek 的 Key **不会过期**，配置一次长期有效。
 
 > 提示：DeepSeek 的余额是**账户级**的，同一账号下任意一个 API Key 查到的余额都相同；
 > 建议新建一个专用 Key（如命名 `menubar-quota`），便于将来单独撤销而不影响其他服务。
+
+### 配置 Cursor token
+
+Cursor 的额度查询需要你的**订阅登录态**（Bearer token）。它只有 Cursor 客户端知道，
+程序不会去解 Cursor 的密文，所以需要你取一次并交给自己机器的 Keychain 保管。
+
+**先把 token 取出来（两种入口通用）**：
+
+1. 在 Cursor 里按 `⌘⇧P` 打开命令面板，输入 `Toggle Developer Tools` 回车
+   （不依赖菜单栏名字——Cursor 各版本菜单结构不同，命令面板是稳定的）
+2. 切到 **Network** 面板，过滤框输入 `cursor.sh`
+3. 触发一次请求：点右上角齿轮打开 Cursor Settings，或点左下角账户头像，
+   直到列表里出现 `api2.cursor.sh`
+4. 点开它 → Headers → Request Headers → 复制 `authorization: Bearer eyJ...` 整行
+   （只复制 `eyJ...` 部分、或带 `Bearer ` 前缀都可以，程序会自动识别）
+5. 列表里一直没有请求 → 命令面板执行 `Reload Window` 后再试
+
+**然后再选一种方式配置，效果相同：**
+
+**① 在菜单栏里配置（推荐）** —— 下拉菜单点「配置 Cursor token」，弹窗里粘贴后保存。
+弹窗内还有「从剪贴板填入」按钮，可以先复制再点它。保存前会**先验证**：
+通过才写入 Keychain，失败只提示原因、不覆盖原有可用 token。
+配置成功后会保留一个「更换 token」入口，换账号时不必去终端删条目。
+
+**② 命令行配置**：
+
+```bash
+bash scripts/cursor-token.sh
+```
+
+脚本会再印一遍上面的取 token 步骤，然后让你粘贴（**不回显**）。顺序是先请求接口验证，**通过才写入** Keychain：
+
+- 通过 → 打印两个模型池的百分比和到期日，再写入
+- 失败 → 不写入、也不覆盖原来还能用的条目
+
+之后随时可以检查现状：
+
+```bash
+bash scripts/cursor-token.sh --check
+```
+
+**何时需要重新配置**：
+
+| 情况 | 表现 |
+|---|---|
+| token 到期（约 2 个月） | 下拉菜单显示「Token 已过期」，并提示点「更换 token」 |
+| 在 Cursor 里退出登录 / 重新登录 | 同上，旧 token 被撤销 |
+| token 被手动删除 | 菜单显示「Cursor 不可用 · 未配置 token」 |
+
+到期前 7 天下拉会转为琥珀色提醒，不会等你某天突然发现数字不动。
 
 ---
 
@@ -116,9 +201,15 @@ open "$PROJ/native/AI Quota Bar.app"
 第 3 步能恢复的原因：菜单栏项的位置由系统分配，偶发会分配到屏幕外；
 重启会重新申请位置。
 
-**显示 `Cursor 读取失败`**
+**显示 `Cursor 不可用 · 未配置 token`**
 
-Cursor 未登录或数据库被占用。打开 Cursor 激活一次，下一轮刷新即恢复。
+还没配置。点下一行的「配置 Cursor token…」在弹窗里粘贴；或用命令行
+`bash scripts/cursor-token.sh`。
+
+**显示 `Cursor 不可用 · token 已失效`**
+
+token 到期（约 2 个月）或在 Cursor 里重新登录过。同样点「配置 Cursor token…」更新，
+会覆盖原来那条 Keychain 条目（`security add-generic-password -U`）。
 
 **显示 `ChatGPT Plus 读取失败`**
 
@@ -126,9 +217,21 @@ Cursor 未登录或数据库被占用。打开 Cursor 激活一次，下一轮�
 ChatGPT 订阅账号登录并直连官方（走本地代理/路由时额度字段不下发），
 跑一次任务后即可显示。
 
-**DeepSeek 显示「未在 Keychain 中配置密钥」**
+**显示 `DeepSeek 不可用 · 未配置密钥`**
 
 按上文「配置 DeepSeek 密钥」写入即可。
+
+**显示 `DeepSeek 不可用 · 密钥已失效`**
+
+说明接口返回了 401：key 被删除/重建，或账号状态异常。重新执行配置命令即可。
+注意这类错误**不会**降级显示上次的余额——余额数字看起来还正常、实际上 key 已失效，
+是最容易误判的情形，所以宁可报警也不留旧值。
+
+**DeepSeek 显示「余额不足，已无法发起请求」**
+
+接口的 `is_available` 为 `false`，即余额已不足以发起任何请求。此时仍显示真实余额
+（通常是 `¥0.00`），但会用红色标注。与「低于阈值」不同：后者只是建议充值，
+仍可正常调用。
 
 **数据看起来是旧的**
 
@@ -141,20 +244,23 @@ ChatGPT 部分停在旧值属正常（见上文「ChatGPT 数据的边界」）�
 ## 目录结构
 
 ```
-ai-quota-bar/
-├── quota.1m.sh              # 取数入口：定位 python3 并调用 report.py
-├── lib/report.py            # 取数 + 输出（数据层的全部逻辑）
-├── config.json              # 上表的配置项
-├── cache/state.json         # 运行时缓存（失败时降级显示用，git 忽略）
-├── native/                  # 原生 App
-│   ├── main.swift           #   程序主体（脚本定位、定时刷新、菜单构建）
-│   ├── QuotaBarView.swift   #   菜单栏自绘视图（外观参数在此）
-│   ├── make_icon.swift      #   App 图标生成器（代码绘制，可复现）
-│   ├── Info.plist           #   LSUIElement=1（无 Dock 图标）
-│   ├── build.sh             #   编译 + 打包
-│   └── AI Quota Bar.app     #   应用本体（构建产物，git 忽略）
-└── README.md                # 本文件
-```
+  ai-quota-bar/
+  ├── quota.1m.sh              # 取数入口：定位 python3 并调用 report.py
+  ├── lib/report.py            # 取数 + 输出（数据层的全部逻辑）
+  ├── config.json              # 上表的配置项
+  ├── scripts/
+  │   └── cursor-token.sh      # 交互式配置 Cursor token 到 Keychain（含验证）
+  ├── cache/state.json         # 运行时缓存（失败时降级显示用，git 忽略）
+  ├── native/                  # 原生 App
+  │   ├── main.swift           #   程序主体（脚本定位、定时刷新、菜单构建）
+  │   ├── QuotaBarView.swift   #   菜单栏自绘视图（外观参数在此）
+  │   ├── make_icon.swift      #   App 图标生成器（代码绘制，可复现）
+  │   ├── Info.plist           #   LSUIElement=1（无 Dock 图标）
+  │   ├── build.sh             #   编译 + 打包
+  │   └── AI Quota Bar.app     #   应用本体（构建产物，git 忽略）
+  ├── SECURITY.md              # 凭证处理与数据流向声明
+  └── README.md                # 本文件
+  ```
 
 **取数与显示是分离的**：`lib/report.py` 负责取数和阈值判定，原生 App 只负责把结果画出来。
 因此调整阈值、容错策略等只改 Python 即可（改完下一次刷新生效，无需重新编译）；
@@ -185,7 +291,8 @@ bash native/build.sh
 ```bash
 pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar"
 rm -rf <项目目录>
-security delete-generic-password -s deepseek-api-key   # 若配置过密钥
+security delete-generic-password -s cursor-access-token   # 若配置过 Cursor token
+security delete-generic-password -s deepseek-api-key      # 若配置过 DeepSeek 密钥
 # 并从 系统设置 → 通用 → 登录项 中移除 AI Quota Bar
 ```
 

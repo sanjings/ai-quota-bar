@@ -21,29 +21,44 @@ ChatGPT Plus  Cursor  DeepSeek    ← 菜单栏常驻，标签+数值两行显�
 
 ## 快速开始
 
+当前发布是 [v0.1.0](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.1.0)（[全部 Release](https://github.com/sanjings/ai-quota-bar/releases)）。该页不附带预编译 `.app`，说明里的「更多细节见 README」指的就是本文件。Release 页上的安装命令是摘要，没有包含生成 `AppIcon.icns`。按本文件的步骤安装。下面的命令都在仓库根目录执行。
+
+`native/AppIcon.icns` 在 `.gitignore` 里，克隆下来没有这个文件。`native/build.sh` 只把它拷进 `.app`，文件不存在时会停在「图标」那一步（`cp: native/AppIcon.icns: No such file or directory`）。第一次构建先生成图标；`native/AppIcon.icns` 已经在时，可以跳过 `swiftc` 和 `iconutil` 两行。
+
 ```bash
 git clone https://github.com/sanjings/ai-quota-bar.git
 cd ai-quota-bar
-bash native/build.sh          # 编译 + 打包
+swiftc native/make_icon.swift -o /tmp/make_icon && /tmp/make_icon
+iconutil -c icns native/AppIcon.iconset -o native/AppIcon.icns
+bash native/build.sh
 open native/"AI Quota Bar.app"
 ```
 
-然后在菜单栏点开这一项，按菜单里的入口配置（也可以用下面的命令行，效果相同）：
+`/tmp/make_icon` 按源文件位置把 `AppIcon.iconset` 写到 `native/`。跑完应能看到 `native/AppIcon.iconset`；没有的话，确认当前目录是仓库根。`iconutil` 再打成 `native/AppIcon.icns`。`bash native/build.sh` 用脚本自身所在目录编译，产物是 `native/AI Quota Bar.app`（ad-hoc 签名，本机运行）。
+
+然后在菜单栏点开这一项配置。菜单里的入口会先向对应接口校验，通过才写入 Keychain。命令行里 Cursor 同样先校验；下面这条 DeepSeek 的 `security` 命令不校验，粘错了要等下一轮刷新才看得到失败。服务名、校验规则和两种入口的差别见下文「配置」。
 
 ```bash
 bash scripts/cursor-token.sh                                         # Cursor，可选
 security add-generic-password -U -s deepseek-api-key -a "$USER" -w   # DeepSeek，可选
 ```
 
-> 要求：macOS 12+，Xcode 命令行工具（`swiftc`）与 python3（系统自带即可）。
-> **不要把 `AI Quota Bar.app` 拷走。** 它靠自己在仓库里的位置找到 `quota.1m.sh`。
-> 若必须放到别的目录，先设置 `AI_QUOTA_BAR_HOME` 为仓库根目录再启动。
+> 要求：macOS 12+（`native/Info.plist` 的 `LSMinimumSystemVersion`）。Xcode 命令行工具提供 `swiftc`、`iconutil` 和 `/usr/bin/python3`。取数脚本 `quota.1m.sh` 按这个顺序找解释器：`/usr/bin/python3`、`/opt/homebrew/bin/python3`、`/usr/local/bin/python3`。`scripts/cursor-token.sh` 固定使用 `/usr/bin/python3`。
+> **把 `AI Quota Bar.app` 留在 `native/`。** 可执行文件是 `native/AI Quota Bar.app/Contents/MacOS/ai-quota-bar`。程序从这个路径向上 5 级到仓库根，再找 `quota.1m.sh`。拷走，或改成别的层级（直接放在仓库根，或在 `native/` 下面再套一层目录），都找不到脚本，菜单没有数据。
+> 若必须把 `.app` 放到别处：先退出已在运行的实例，再让新进程带上仓库根目录。已经在跑的实例不会改环境。登录项由系统拉起，读不到这个变量，开机自启请用留在 `native/` 里的那一份。在仓库根目录执行（`$(pwd)` 就是仓库根，目录里要有 `quota.1m.sh`）：
+>
+> ```bash
+> pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar" || true
+> open --env "AI_QUOTA_BAR_HOME=$(pwd)" -n "/你放置的路径/AI Quota Bar.app"
+> ```
+>
+> 只有向上找 `quota.1m.sh` 失败时才会读 `AI_QUOTA_BAR_HOME`。
 > ChatGPT 额度不用配凭证，读的是本机 Codex CLI 会话；Cursor / DeepSeek 的凭证说明见下文。
 > 凭证只进本机 Keychain，边界见 [SECURITY.md](SECURITY.md)。
 
-**开机自启**：系统设置 → 通用 → 登录项，把 `AI Quota Bar.app` 拖入列表。
+**开机自启**：把 `native/AI Quota Bar.app` 这个路径加进登录项。macOS 13 及以后：系统设置 → 通用 → 登录项（较新版本里叫「登录项与扩展」）。macOS 12：系统偏好设置 → 用户与群组 → 登录项。
 
-**退出**：菜单栏点开 → 任意处按 Esc 收起菜单，或
+**退出**：菜单栏点开 → 按 Esc 收起菜单，或
 
 ```bash
 pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar"
@@ -105,11 +120,13 @@ Cursor 登录态踢掉。若在 Cursor 里退出登录/重新登录，旧 token 
 
 ### 配置 DeepSeek 密钥
 
-密钥存入 macOS Keychain，不落明文文件。**两种方式，效果相同：**
+密钥存入 macOS Keychain，不落明文文件。菜单和命令行写的是同一条 Keychain 记录；菜单会先校验，命令行不会。
 
 **① 在菜单栏里配置（推荐）** —— 下拉菜单点「配置 DeepSeek 密钥」，粘贴后保存。
-保存前会先调 `/user/balance` 验证，**通过才写入**；失败只提示原因（如「密钥无效（HTTP 401）」），
-不会覆盖原有可用密钥。配置成功后保留「更换密钥」入口。
+弹窗里有「从剪贴板填入」。保存前会先调 `https://api.deepseek.com/user/balance` 验证，**通过才写入**；
+失败只提示原因，不会覆盖原有可用密钥。Key 须以 `sk-` 开头，否则提示「格式不对：DeepSeek 的 Key 以 sk- 开头」；
+接口拒绝时提示「密钥无效（HTTP 401）」。配置成功后保留「更换密钥」入口。
+写入的 Keychain 服务名来自 `config.json` 的 `deepseek.keychainService`（默认 `deepseek-api-key`）。
 
 **② 命令行**：
 
@@ -117,8 +134,10 @@ Cursor 登录态踢掉。若在 Cursor 里退出登录/重新登录，旧 token 
 security add-generic-password -U -s deepseek-api-key -a "$USER" -w
 ```
 
-命令会提示输入密钥（**输入时不回显**，属正常）。`-U` 表示已存在时覆盖。
-注意这条路**不做校验**——粘错了要等下一轮刷新才会报「密钥已失效」。
+`-s` 必须和 `deepseek.keychainService` 一致，改过配置就要换成同一个名字。`-a` 用当前用户名，与程序写入时一致。
+`-w` 放在最后且不跟密码，是为了不把密钥留在进程参数里。`security` 会问两次（输入、再输入一次），
+**两次都不回显**。`-U` 表示已存在时覆盖。
+这条路**不做校验**，也不检查 `sk-` 前缀——粘错了要等下一轮刷新才会报「密钥已失效」。
 
 未配置时，下拉菜单会显示「DeepSeek 不可用 · 未配置密钥」并给出可点击的配置入口，**不影响其余部分正常使用**。
 DeepSeek 的 Key **不会过期**，配置一次长期有效。
@@ -145,9 +164,9 @@ Cursor 的额度查询需要你的**订阅登录态**（Bearer token）。它只
 **然后再选一种方式配置，效果相同：**
 
 **① 在菜单栏里配置（推荐）** —— 下拉菜单点「配置 Cursor token」，弹窗里粘贴后保存。
-弹窗内还有「从剪贴板填入」按钮，可以先复制再点它。保存前会**先验证**：
-通过才写入 Keychain，失败只提示原因、不覆盖原有可用 token。
-配置成功后会保留一个「更换 token」入口，换账号时不必去终端删条目。
+弹窗内还有「从剪贴板填入」，可以先复制再点它。保存前会**先验证**：
+通过才写入 Keychain（服务名 `cursor-access-token`，账户名是当前用户），失败只提示原因、不覆盖原有可用 token。
+配置成功后菜单里的入口变成「更换 token」，换账号时不必去终端删条目。
 
 **② 命令行配置**：
 
@@ -170,11 +189,10 @@ bash scripts/cursor-token.sh --check
 
 | 情况 | 表现 |
 |---|---|
-| token 到期（约 2 个月） | 下拉菜单显示「Token 已过期」，并提示点「更换 token」 |
-| 在 Cursor 里退出登录 / 重新登录 | 同上，旧 token 被撤销 |
-| token 被手动删除 | 菜单显示「Cursor 不可用 · 未配置 token」 |
-
-到期前 7 天下拉会转为琥珀色提醒，不会等你某天突然发现数字不动。
+| 还没到期，剩余不足 7 天，接口仍返回额度 | 下拉里琥珀色「Token N 天后过期」，入口是「更换 token」 |
+| 接口仍返回额度，但 token 里的 `exp` 已过 | 「Token 已过期」，并提示点「更换 token」 |
+| 接口返回 401（到期被拒，或在 Cursor 里退出 / 重新登录） | 「Cursor 不可用 · token 已失效」，入口是「配置 Cursor token」 |
+| Keychain 里没有 `cursor-access-token` | 「Cursor 不可用 · 未配置 token」，入口同样是「配置 Cursor token」 |
 
 ---
 
@@ -201,15 +219,20 @@ open "$PROJ/native/AI Quota Bar.app"
 第 3 步能恢复的原因：菜单栏项的位置由系统分配，偶发会分配到屏幕外；
 重启会重新申请位置。
 
+**`build.sh` 停在「图标」，找不到 `AppIcon.icns`**
+
+按上文「快速开始」先跑 `swiftc` / `make_icon` 和 `iconutil`。`build.sh` 不生成图标。
+
 **显示 `Cursor 不可用 · 未配置 token`**
 
-还没配置。点下一行的「配置 Cursor token…」在弹窗里粘贴；或用命令行
+还没配置。点下一行的「配置 Cursor token」在弹窗里粘贴；或用命令行
 `bash scripts/cursor-token.sh`。
 
 **显示 `Cursor 不可用 · token 已失效`**
 
-token 到期（约 2 个月）或在 Cursor 里重新登录过。同样点「配置 Cursor token…」更新，
-会覆盖原来那条 Keychain 条目（`security add-generic-password -U`）。
+接口返回了 401：token 到期（约 2 个月）或在 Cursor 里重新登录过。点「配置 Cursor token」更新。
+保存前会先验证，通过后用 `security add-generic-password -U` 覆盖原来那条（服务名 `cursor-access-token`）。
+额度数字还在、菜单里写着「Token 已过期」时，点「更换 token」。
 
 **显示 `ChatGPT Plus 读取失败`**
 
@@ -255,8 +278,10 @@ ChatGPT 部分停在旧值属正常（见上文「ChatGPT 数据的边界」）�
   │   ├── main.swift           #   程序主体（脚本定位、定时刷新、菜单构建）
   │   ├── QuotaBarView.swift   #   菜单栏自绘视图（外观参数在此）
   │   ├── make_icon.swift      #   App 图标生成器（代码绘制，可复现）
-  │   ├── Info.plist           #   LSUIElement=1（无 Dock 图标）
-  │   ├── build.sh             #   编译 + 打包
+  │   ├── AppIcon.iconset/     #   图标中间产物（git 忽略，make_icon 生成）
+  │   ├── AppIcon.icns         #   构建用图标（iconutil 生成，git 忽略）
+  │   ├── Info.plist           #   LSUIElement=1（无 Dock 图标）；最低系统 12.0
+  │   ├── build.sh             #   编译 + 打包（拷贝已有的 AppIcon.icns，不负责生成）
   │   └── AI Quota Bar.app     #   应用本体（构建产物，git 忽略）
   ├── SECURITY.md              # 凭证处理与数据流向声明
   └── README.md                # 本文件
@@ -278,7 +303,7 @@ bash native/build.sh
 
 **修改取数逻辑 / 阈值行为** → 改 `lib/report.py` 或 `config.json`，无需编译。
 
-**重新生成图标** → 改 `native/make_icon.swift`（配色/进度参数在文件末尾），然后：
+**重新生成图标** → 改 `native/make_icon.swift`（配色/进度参数在文件末尾），然后在仓库根目录执行与「快速开始」相同的三步。`build.sh` 不会调用 `iconutil`，只拷贝已经生成的 `native/AppIcon.icns`：
 
 ```bash
 swiftc native/make_icon.swift -o /tmp/make_icon && /tmp/make_icon
@@ -292,8 +317,8 @@ bash native/build.sh
 pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar"
 rm -rf <项目目录>
 security delete-generic-password -s cursor-access-token   # 若配置过 Cursor token
-security delete-generic-password -s deepseek-api-key      # 若配置过 DeepSeek 密钥
-# 并从 系统设置 → 通用 → 登录项 中移除 AI Quota Bar
+security delete-generic-password -s deepseek-api-key      # 若配置过 DeepSeek 密钥；改过 keychainService 时换成那个名字
+# 并从登录项中移除 AI Quota Bar（路径见上文「开机自启」）
 ```
 
 ---

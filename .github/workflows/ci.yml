@@ -1,0 +1,119 @@
+name: CI
+
+# push：任意分支（含 PR 分支本身）每次推送都跑。
+# pull_request：目标为 main 的 PR（含同步更新）再跑一次。
+# 不编译 Swift：ubuntu 没有 Xcode / macOS SDK，完整构建见 PR 说明。
+on:
+  push:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  syntax:
+    name: Python, shell, and native structure
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Python compile check
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import py_compile
+          import sys
+          import tempfile
+          from pathlib import Path
+
+          root = Path(".").resolve()
+          skip = {".git", "cache", "__pycache__"}
+          files = sorted(
+              path
+              for path in root.rglob("*.py")
+              if path.is_file() and not (set(path.relative_to(root).parts) & skip)
+          )
+          required = root / "lib" / "report.py"
+          if required not in files:
+              sys.exit(f"required file missing from compile set: {required}")
+
+          with tempfile.TemporaryDirectory() as tmp:
+              out = Path(tmp)
+              for index, path in enumerate(files):
+                  py_compile.compile(
+                      str(path),
+                      cfile=str(out / f"{index}.pyc"),
+                      doraise=True,
+                  )
+                  print(f"py_compile ok: {path.relative_to(root)}")
+          PY
+
+      - name: Shell syntax check
+        run: |
+          set -euo pipefail
+          mapfile -t scripts < <(find . -type f -name '*.sh' -not -path './.git/*' | sort)
+          required=(
+            ./quota.1m.sh
+            ./scripts/cursor-token.sh
+            ./native/build.sh
+          )
+          for path in "${required[@]}"; do
+            if [[ ! -f "$path" ]]; then
+              echo "required shell script missing: $path" >&2
+              exit 1
+            fi
+          done
+          if [[ ${#scripts[@]} -eq 0 ]]; then
+            echo "no shell scripts found" >&2
+            exit 1
+          fi
+          for path in "${scripts[@]}"; do
+            bash -n "$path"
+            echo "bash -n ok: $path"
+          done
+
+      - name: Native sources structure check
+        run: |
+          set -euo pipefail
+          # 只确认 macOS 应用的源文件和 bundle 元数据还在。
+          # swiftc / Cocoa 无法在 Linux runner 上可靠编译，这里故意不调用。
+          python3 - <<'PY'
+          import plistlib
+          import sys
+          from pathlib import Path
+
+          required = [
+              Path("native/main.swift"),
+              Path("native/QuotaBarView.swift"),
+              Path("native/make_icon.swift"),
+              Path("native/build.sh"),
+              Path("native/Info.plist"),
+          ]
+          missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0]
+          if missing:
+              sys.exit("missing or empty native files: " + ", ".join(missing))
+
+          build = Path("native/build.sh").read_text(encoding="utf-8")
+          if "swiftc" not in build:
+              sys.exit("native/build.sh does not invoke swiftc")
+
+          with Path("native/Info.plist").open("rb") as handle:
+              info = plistlib.load(handle)
+          expected = {
+              "CFBundleExecutable": "ai-quota-bar",
+              "CFBundlePackageType": "APPL",
+          }
+          for key, value in expected.items():
+              actual = info.get(key)
+              if actual != value:
+                  sys.exit(f"Info.plist {key}={actual!r}, expected {value!r}")
+
+          print("native structure ok; Swift compile skipped (needs macOS/Xcode)")
+          PY

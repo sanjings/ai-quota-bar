@@ -7,7 +7,7 @@
 
 1. **额度凭证只读你自己配置的 Keychain 条目。** 程序不解密 Cursor 的 token，
    不读取 Keychain 里的 `Cursor Safe Storage`。唯一例外是菜单标题：只读
-   `state.vscdb` 中的套餐代码 `stripeMembershipType`（不是 token）。读不到时显示「Cursor」。
+   `state.vscdb` 中的套餐代码 `stripeMembershipType`（不是 token）。读不到时，下拉套餐名显示「Cursor」。菜单栏上的「Cursor / Grok Bot」来自额度接口，不另读本地存储。
 2. **不落盘。** token / API Key 只在内存中用于单次请求，不写入 `cache/`、
    不写日志、不写临时文件。
 3. **不打印。** 任何输出（菜单栏文本、JSON、错误信息）都不包含凭证内容。
@@ -17,7 +17,8 @@
 
 | 数据源 | 目标 | 携带内容 | 频次 |
 |---|---|---|---|
-| Cursor | `https://api2.cursor.sh/...GetCurrentPeriodUsage` | 你自己配置的 Bearer token | 每 5 分钟（有缓存） |
+| Cursor 双池 | `https://api2.cursor.sh/...GetCurrentPeriodUsage` | 你自己配置的 Bearer token | 每 5 分钟（有缓存） |
+| Grok Bot 周额度 | `https://api2.cursor.sh/...GetSandUsageStatus` | 同一份 Cursor Bearer token | 与 Cursor 同一轮刷新（有缓存）。账号没有这笔额度时菜单不显示 |
 | DeepSeek | `https://api.deepseek.com/user/balance` | 你自己配置的 API Key | 每 5 分钟（有缓存） |
 | ChatGPT | **不联网** | — | 每 60 秒读一次本地文件 |
 

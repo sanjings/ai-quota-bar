@@ -308,7 +308,7 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
                 // 分段着色：逐段设置颜色，整行共享字体与 tab 停靠位
                 let text = NSMutableAttributedString()
                 var usesDefaultColor = false
-                let isActionable = entry.href != nil || entry.refresh == true
+                let isActionable = entry.href != nil || entry.refresh == true || entry.action != nil
                 for segment in segments {
                     var attrs: [NSAttributedString.Key: Any] = [.font: font]
                     if let paragraphStyle { attrs[.paragraphStyle] = paragraphStyle }

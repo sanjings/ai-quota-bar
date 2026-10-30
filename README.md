@@ -338,6 +338,16 @@ security delete-generic-password -s deepseek-api-key      # 若配置过 DeepSee
 
 ---
 
+## 持续集成
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) 在 `ubuntu-latest` 上跑。当前只做三项检查：Python 编译检查（`py_compile`）、shell 语法检查（`bash -n`），以及 macOS 应用源文件和 `Info.plist` 的结构检查。
+
+菜单栏应用是 Swift，依赖 Xcode 和 macOS SDK。这条流水线故意不完整编译它，也不运行 `native/build.sh`。一次绿色的 CI 只说明上面三项通过，并不表示 macOS 构建已经验证过。本机仍按「快速开始」在 macOS 上编译。
+
+以后可以另加一个 `macos-latest` job 来跑完整编译；那会更慢，也更耗 Actions 额度，留到单独的改动里再做。
+
+---
+
 ## 说明
 
 Cursor 的额度接口（月度双池，以及 Grok Bot 周额度 `GetSandUsageStatus`）为**未公开的逆向接口**，可能随上游版本变更而失效；

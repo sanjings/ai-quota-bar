@@ -35,6 +35,10 @@ STATE_PATH = os.path.join(CACHE_DIR, "state.json")
 CURSOR_USAGE_URL = (
     "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
 )
+# Grok Bot 在协议里叫 Sand，和 Cursor 月度双池不是同一个额度。
+CURSOR_GROK_URL = (
+    "https://api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus"
+)
 
 # Cursor 额度的凭证：由用户自己提供，存在 macOS Keychain 的这条条目里
 # （service = cursor-access-token，account = $USER）。
@@ -314,7 +318,54 @@ def fetch_cursor():
         "planLimit": int(plan.get("limit") or 0),
         "bonusSpend": int(plan.get("bonusSpend") or 0),
         "credId": cred_id(token),
+        "grok": fetch_grok_bot(token),
     }
+
+
+def parse_time(value):
+    """接口时间：秒、毫秒，或 ISO-8601。解析不了返回 0。"""
+    if value is None or value == "":
+        return 0
+    if isinstance(value, (int, float)):
+        number = float(value)
+        return number / 1000.0 if number > 1e12 else number
+    text = str(value).strip().replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(text).timestamp()
+    except ValueError:
+        return 0
+
+
+def fetch_grok_bot(token):
+    """独立的一周额度。没有额度或请求失败时返回 None，不影响 Cursor 主额度。"""
+    try:
+        data = http_json(
+            CURSOR_GROK_URL,
+            method="POST",
+            headers={
+                "Authorization": "Bearer " + token,
+                "Connect-Protocol-Version": "1",
+            },
+            payload={},
+        )
+    except Exception:
+        return None
+    if data.get("includedLimitZero") is True or data.get("included_limit_zero") is True:
+        return None
+    if (data.get("hasNonZeroIncludedLimit") is False
+            or data.get("has_non_zero_included_limit") is False):
+        return None
+    raw = data.get("usagePercent")
+    if raw is None:
+        raw = data.get("usage_percent")
+    if raw is None:
+        return None
+    try:
+        pct = float(raw)
+    except (TypeError, ValueError):
+        return None
+    reset = data.get("nextResetTimestampUtc") or data.get("next_reset_timestamp_utc")
+    return {"pct": pct, "resetsAt": parse_time(reset)}
 
 
 # --------------------------------------------------------------------------
@@ -672,17 +723,18 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
         primary_pct = codex.get("primaryPct", 0.0)
         secondary_pct = codex.get("secondaryPct", 0.0)
         columns.append({
-            "label": "ChatGPT Plus",
-            "value": "%d%%/%d%%" % (int(round(primary_pct)),
-                                    int(round(secondary_pct))),
+            "label": "ChatGPT",
+            "value": "%d%%\u2009/\u2009%d%%" % (int(round(primary_pct)),
+                                                 int(round(secondary_pct))),
             "color": COLOR[level(max(primary_pct, secondary_pct), warn, danger)],
         })
     if cursor:
         models_pct = cursor.get("modelsPct", 0.0)
         other_pct = cursor.get("otherPct", 0.0)
+        has_grok = (cursor.get("grok") or {}).get("pct") is not None
         columns.append({
-            "label": "Cursor",
-            "value": "%d%%/%d%%" % (int(round(models_pct)), int(round(other_pct))),
+            "label": "Cursor\u2009/\u2009Grok Bot" if has_grok else "Cursor",
+            "value": "%d%%\u2009/\u2009%d%%" % (int(round(models_pct)), int(round(other_pct))),
             "color": COLOR[level(max(models_pct, other_pct), warn, danger)],
         })
     elif cfg["cursor"]["enabled"] and cursor_err:
@@ -835,6 +887,22 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
                 color=COLOR["muted"], size=12, tabs=[15]))
             menu.append(item("\t重置倒计时  %s" % countdown(cursor["cycleEnd"]),
                              color=COLOR["muted"], size=12, tabs=[15]))
+        grok = cursor.get("grok") or None
+        if grok and grok.get("pct") is not None:
+            # 独立一周额度，放在 Cursor 月度倒计时之后，不并进上面的双池。
+            pct = float(grok["pct"])
+            row = "\tGrok Bot\t%5.1f%%" % pct
+            if show_bars:
+                row += "\t" + bar(pct, width)
+            menu.append(item(row, color=COLOR[level(pct, warn, danger)],
+                             mono=True, tabs=tabs))
+            if grok.get("resetsAt"):
+                resets_at = float(grok["resetsAt"])
+                menu.append(item(
+                    "\t重置时间  %s · %s" % (
+                        fmt_clock(resets_at),
+                        countdown(resets_at * 1000, with_minutes=False)),
+                    color=COLOR["muted"], size=12, tabs=[15]))
         # token 是自己配置的，会过期（约两个月）或被重新登录作废：
         # 到期前 7 天开始用警示色，避免某天突然失效却不知道为什么。
         expiry = cursor.get("tokenExp")
@@ -990,6 +1058,9 @@ def main():
                 service = cfg["deepseek"]["keychainService"]
                 current = current_cred_id(lambda: read_deepseek_key(service))
             if not current or cached.get("credId") != current:
+                return False
+            # 旧缓存没有 Grok Bot 字段时重取一次，否则要等整个 TTL。
+            if key == "cursor" and "grok" not in cached:
                 return False
         limit = ttl["local"] if local else ttl["fetch"]
         return (now - float(cached.get("ts") or 0)) < limit

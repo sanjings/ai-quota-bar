@@ -1,21 +1,29 @@
 # AI Quota Bar
 
-macOS 菜单栏常驻小组件，同时显示 **ChatGPT（Codex）订阅额度**、**Cursor 订阅额度双池** 与 **DeepSeek 账户余额**。
+macOS 菜单栏常驻小组件，同时显示 **ChatGPT（Codex）订阅额度**、**Cursor 订阅额度双池**、**Grok Bot 独立周额度** 与 **DeepSeek 账户余额**。Grok Bot 和 Cursor 月度双池是两笔额度，共用同一条 Cursor token。账号有这笔周额度时，菜单栏对应列的标签是 **Cursor / Grok Bot**；没有时标签仍是 **Cursor**。
 
 ```
-ChatGPT Plus  Cursor  DeepSeek    ← 菜单栏常驻，标签+数值两行显示
-4%/4%         92%/42% ¥2.79
+ChatGPT    Cursor / Grok Bot    DeepSeek    ← 菜单栏常驻，标签+数值两行显示
+4% / 4%    92% / 42%            ¥2.79
 ```
 
-两列百分比的含义：
+斜线两侧是细空格（U+2009）。没有独立 Grok Bot 周额度时，中间列的标签是 `Cursor`，两格百分比不变。
+
+菜单栏上两列百分比（或余额）的含义：
 
 | 标签 | 左边 | 右边 |
 |---|---|---|
-| ChatGPT Plus | 5 小时额度已用 | 周额度已用 |
-| Cursor | Cursor Models 已用 | Others Models 已用 |
+| ChatGPT | 5 小时额度已用 | 周额度已用 |
+| Cursor / Grok Bot（没有独立周额度时标签为 Cursor） | Cursor Models 已用 | Others Models 已用 |
 | DeepSeek | 账户余额（不是百分比） | |
 
-点击菜单栏项可展开详情：额度进度条、重置倒计时、DeepSeek 充值/赠送拆分、各服务用量面板直达链接。三个数据源互相独立，只配自己要用的即可。没配 Cursor token、或本机没有 Codex 会话时，对应那一列会显示「不可用」或读取失败，其余照常，这不是安装失败。
+Grok Bot 的已用百分比不进菜单栏这两格。这一列的颜色只看 Cursor 双池里较高的那一格；Grok Bot 自己的颜色只出现在下拉那一行。
+
+下拉菜单里，有计费周期数据时，Grok Bot 排在 Cursor 月度「重置倒计时」之后；周期字段缺失时，紧接在 Others Models 后面。先是一行 `Grok Bot` 和百分比（进度条跟双池用同一个开关）。接口给了重置时间时，下一行是 `重置时间  mm/dd HH:MM · 倒计时`。
+
+账号没有这笔独立额度，或这一次没有拿到已用百分比时，这两行不出现，菜单栏标签保持「Cursor」，Cursor 双池照常。菜单上写「Grok Bot」，不写协议名 Sand。下拉菜单里 ChatGPT 区块的标题仍是「ChatGPT Plus」。
+
+点击菜单栏项可展开详情：额度进度条、重置倒计时、DeepSeek 充值/赠送拆分、各服务用量面板直达链接。ChatGPT、Cursor、DeepSeek 三个数据源互相独立，只配自己要用的即可。没配 Cursor token、或本机没有 Codex 会话时，对应那一列会显示「不可用」或读取失败，其余照常，这不是安装失败。
 
 ---
 
@@ -53,7 +61,7 @@ security add-generic-password -U -s deepseek-api-key -a "$USER" -w   # DeepSeek�
 > ```
 >
 > 只有向上找 `quota.1m.sh` 失败时才会读 `AI_QUOTA_BAR_HOME`。
-> ChatGPT 额度不用配凭证，读的是本机 Codex CLI 会话；Cursor / DeepSeek 的凭证说明见下文。
+> ChatGPT 额度不用配凭证，读的是本机 Codex CLI 会话；Cursor / DeepSeek 的凭证说明见下文。Grok Bot 不另配凭证，和 Cursor 共用 `cursor-access-token`。
 > 凭证只进本机 Keychain，边界见 [SECURITY.md](SECURITY.md)。
 
 **开机自启**：把 `native/AI Quota Bar.app` 这个路径加进登录项。macOS 13 及以后：系统设置 → 通用 → 登录项（较新版本里叫「登录项与扩展」）。macOS 12：系统偏好设置 → 用户与群组 → 登录项。
@@ -72,6 +80,7 @@ pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar"
 |---|---|---|---|
 | ChatGPT 额度 | **本地解析** `~/.codex/sessions` 会话记录 | 无需（订阅登录态由 Codex CLI 维护） | 无网络请求；数据随 Codex 任务结束更新 |
 | Cursor 双池额度 | `api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage` | macOS Keychain，service = `cursor-access-token`（**需手动配置一次**） | 未公开接口，已做容错 |
+| Grok Bot 周额度 | `api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus` | 与 Cursor 同一条 Keychain token，不另配 | 独立的一周额度。菜单显示「Grok Bot」。没有额度或请求失败时省略相关行，不影响 Cursor 双池 |
 | DeepSeek 余额 | `api.deepseek.com/user/balance`（官方公开接口） | macOS Keychain 中的 API Key | |
 
 **关于 Cursor 凭证的边界（重要）**：额度用的 token **不从 Cursor 内部存储读取，也不解密**。
@@ -79,7 +88,8 @@ pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar"
 Keychain 里的 `Cursor Safe Storage` 不碰。
 
 菜单标题上的套餐名是唯一例外：只读 `state.vscdb` 里的 `stripeMembershipType`
-（`pro`、`ultra` 这种代码，不是 token）。读不到具体套餐时显示「Cursor」。
+（`pro`、`ultra` 这种代码，不是 token）。读不到具体套餐时，下拉里的套餐名显示「Cursor」。
+菜单栏那一列的标签不看套餐代码：有独立 Grok Bot 周额度时是「Cursor / Grok Bot」，否则是「Cursor」。
 
 这样做的取舍很明确：**放弃"零配置自动读取"，换取代码里没有任何绕过第三方应用
 凭据保护的部分**——可审计、可长期维护，也不会因为 Cursor 改加密方案就整体失效。
@@ -93,6 +103,7 @@ Cursor 登录态踢掉。若在 Cursor 里退出登录/重新登录，旧 token 
 过后由本地推断归零显示。需 ChatGPT 订阅登录 + 官方直连（经代理/路由时该字段为空）。
 
 三个数据源**互相独立**：其中一个失效时，其余照常显示，失效的那项会给出文字提示而非中断整个组件。
+Grok Bot 算在 Cursor 这一次取数里：周额度请求失败，或账号没有这笔额度时，只是不显示 Grok Bot，Cursor 双池仍用这次结果。
 
 ---
 
@@ -102,7 +113,7 @@ Cursor 登录态踢掉。若在 Cursor 里退出登录/重新登录，旧 token 
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `cursor.enabled` | `true` | 是否显示 Cursor 额度 |
+| `cursor.enabled` | `true` | 是否显示 Cursor 额度（含同一条 token 上的 Grok Bot 周额度） |
 | `codex.enabled` | `true` | 是否显示 ChatGPT 额度 |
 | `deepseek.enabled` | `true` | 是否显示 DeepSeek 余额 |
 | `deepseek.keychainService` | `deepseek-api-key` | Keychain 条目的服务名 |
@@ -114,8 +125,8 @@ Cursor 登录态踢掉。若在 Cursor 里退出登录/重新登录，旧 token 
 | `thresholds.warn` | `50.0` | 用量达到该百分比转为琥珀色 |
 | `thresholds.danger` | `80.0` | 用量达到该百分比转为红色 |
 
-**刷新节奏**：App 每 60 秒调用一次取数脚本；网络类（Cursor/DeepSeek）由 300 秒
-缓存挡住不重复发请求，本地类（ChatGPT）每次重读（成本≈0）。新增数据源只需在
+**刷新节奏**：App 每 60 秒调用一次取数脚本；网络类（Cursor 双池与 Grok Bot、DeepSeek）由 300 秒
+缓存挡住不重复发请求。Grok Bot 跟 Cursor 双池放在同一次结果里，共用这一档缓存。本地类（ChatGPT）每次重读（成本≈0）。新增数据源只需在
 `lib/report.py` 中决定归 fetch 还是 local 档。
 
 ### 配置 DeepSeek 密钥
@@ -223,6 +234,10 @@ open "$PROJ/native/AI Quota Bar.app"
 
 按上文「快速开始」先跑 `swiftc` / `make_icon` 和 `iconutil`。`build.sh` 不生成图标。
 
+**菜单栏是 `Cursor`，没有 `Grok Bot`**
+
+账号没有独立的 Grok Bot 周额度时就是这样：下拉里不出现 Grok Bot 行，标签保持「Cursor」，Cursor Models / Others Models 照常。这一次请求没有返回已用百分比时同样隐藏，下一轮刷新再判断。
+
 **显示 `Cursor 不可用 · 未配置 token`**
 
 还没配置。点下一行的「配置 Cursor token」在弹窗里粘贴；或用命令行
@@ -325,6 +340,6 @@ security delete-generic-password -s deepseek-api-key      # 若配置过 DeepSee
 
 ## 说明
 
-Cursor 的额度接口为**未公开的逆向接口**，可能随上游版本变更而失效；
+Cursor 的额度接口（月度双池，以及 Grok Bot 周额度 `GetSandUsageStatus`）为**未公开的逆向接口**，可能随上游版本变更而失效；
 ChatGPT 的额度数据依赖 Codex CLI 的本地会话记录格式，同样可能随版本变更；
 DeepSeek 余额接口为官方公开接口。程序已对字段做容错处理，取不到时降级显示而非崩溃。

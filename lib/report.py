@@ -903,25 +903,37 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
                         fmt_clock(resets_at),
                         countdown(resets_at * 1000, with_minutes=False)),
                     color=COLOR["muted"], size=12, tabs=[15]))
-        # token 是自己配置的，会过期（约两个月）或被重新登录作废：
-        # 到期前 7 天开始用警示色，避免某天突然失效却不知道为什么。
+        # 有效期和更换放在同一行，整行可点。日期用状态色；
+        # 「· 更换 token」不给颜色，悬停时才会反白（同页脚「手动刷新」）。
         expiry = cursor.get("tokenExp")
         if expiry:
             left = expiry - time.time()
             text = fmt_clock(expiry)
             if left <= 0:
-                menu.append(item("\tToken 已过期  %s" % text,
-                                 color=COLOR["danger"], size=12, tabs=[15]))
-                menu.append(sub("\t点「更换 token」更新",
-                                color=COLOR["danger"], size=12, tabs=[15]))
+                status = "Token 已过期  %s" % text
+                status_color = COLOR["danger"]
             elif left < 7 * 86400:
-                menu.append(item("\tToken %d 天后过期  %s" % (left // 86400, text),
-                                 color=COLOR["warn"], size=12, tabs=[15]))
+                status = "Token %d 天后过期  %s" % (left // 86400, text)
+                status_color = COLOR["warn"]
             else:
-                menu.append(item("\tToken 有效至  %s" % text,
-                                 color=COLOR["muted"], size=12, tabs=[15]))
-        # 已配置时也留一个入口：换账号/换 token 不必先回终端删条目
-        menu.append(item("\t更换 token", action="configure-cursor-token", tabs=[15]))
+                status = "Token 有效至  %s" % text
+                status_color = COLOR["muted"]
+        else:
+            status = None
+            status_color = None
+        segments = []
+        if status:
+            segments.append({"text": "\t" + status, "color": status_color})
+            segments.append({"text": " · 更换 token"})
+        else:
+            segments.append({"text": "\t更换 token"})
+        menu.append({
+            "kind": "item",
+            "action": "configure-cursor-token",
+            "size": 12,
+            "tabs": [15],
+            "segments": segments,
+        })
     elif cursor_err:
         menu.append(separator())
         # 两行说清：标题行带简短原因，第二行是唯一可点的动作。

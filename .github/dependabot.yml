@@ -1,0 +1,11 @@
+# 只跟踪仓库里 Dependabot 能更新的清单。
+# github-actions：.github/workflows/ci.yml 使用 actions/checkout。
+# 未包含 pip：lib/report.py 只用标准库，没有 requirements / pyproject / Pipfile。
+# 未包含 swift：native/build.sh 直接调用 swiftc，没有 Package.swift。
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

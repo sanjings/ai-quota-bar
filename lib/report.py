@@ -724,18 +724,24 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
         secondary_pct = codex.get("secondaryPct", 0.0)
         columns.append({
             "label": "ChatGPT",
-            "value": "%d%%\u2009/\u2009%d%%" % (int(round(primary_pct)),
+            "value": "%d%%\u200a/\u200a%d%%" % (int(round(primary_pct)),
                                                  int(round(secondary_pct))),
             "color": COLOR[level(max(primary_pct, secondary_pct), warn, danger)],
         })
     if cursor:
         models_pct = cursor.get("modelsPct", 0.0)
         other_pct = cursor.get("otherPct", 0.0)
-        has_grok = (cursor.get("grok") or {}).get("pct") is not None
+        grok_pct = (cursor.get("grok") or {}).get("pct")
+        has_grok = grok_pct is not None
+        value = "%d%%\u200a/\u200a%d%%" % (int(round(models_pct)), int(round(other_pct)))
+        level_pct = max(models_pct, other_pct)
+        if has_grok:
+            value += "\u200a/\u200a%d%%" % int(round(float(grok_pct)))
+            level_pct = max(level_pct, float(grok_pct))
         columns.append({
-            "label": "Cursor\u2009/\u2009Grok Bot" if has_grok else "Cursor",
-            "value": "%d%%\u2009/\u2009%d%%" % (int(round(models_pct)), int(round(other_pct))),
-            "color": COLOR[level(max(models_pct, other_pct), warn, danger)],
+            "label": "Cursor / Grok Bot" if has_grok else "Cursor",
+            "value": value,
+            "color": COLOR[level(level_pct, warn, danger)],
         })
     elif cfg["cursor"]["enabled"] and cursor_err:
         # 凭证缺失/失效：显示占位符而不是空着——菜单栏上少一整列会让人以为

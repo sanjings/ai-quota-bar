@@ -63,6 +63,7 @@ jobs:
             ./quota.1m.sh
             ./scripts/cursor-token.sh
             ./native/build.sh
+            ./native/package.sh
           )
           for path in "${required[@]}"; do
             if [[ ! -f "$path" ]]; then
@@ -94,6 +95,7 @@ jobs:
               Path("native/QuotaBarView.swift"),
               Path("native/make_icon.swift"),
               Path("native/build.sh"),
+              Path("native/package.sh"),
               Path("native/Info.plist"),
           ]
           missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0]
@@ -103,6 +105,11 @@ jobs:
           build = Path("native/build.sh").read_text(encoding="utf-8")
           if "swiftc" not in build:
               sys.exit("native/build.sh does not invoke swiftc")
+
+          package = Path("native/package.sh").read_text(encoding="utf-8")
+          for token in ("build.sh", "ditto", "quota.1m.sh"):
+              if token not in package:
+                  sys.exit(f"native/package.sh missing {token}")
 
           with Path("native/Info.plist").open("rb") as handle:
               info = plistlib.load(handle)

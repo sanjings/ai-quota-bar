@@ -1,0 +1,74 @@
+name: Release
+
+# 版本 tag（v*）推送到 GitHub 时，在 macOS 上打出与 native/package.sh 相同的 zip，
+# 并挂到同名 Release。不实现自动更新。
+# 日常 push / PR 仍走 ci.yml（ubuntu，不编译 Swift）。
+
+on:
+  push:
+    tags:
+      - "v[0-9]*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos-app:
+    name: Build and upload macOS zip
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Toolchain
+        run: swiftc --version
+
+      - name: Package
+        env:
+          APP_VERSION: ${{ github.ref_name }}
+        run: bash native/package.sh
+
+      - name: Upload to Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="$GITHUB_REF_NAME"
+          shopt -s nullglob
+          files=(dist/*.zip dist/*.zip.sha256)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "dist/ 里没有 zip" >&2
+            exit 1
+          fi
+          ls -lh "${files[@]}"
+
+          # tag 推送有时比 Release 记录稍早可见。已有 Release（含草稿）只补产物。
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            sleep 5
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，上传产物"
+            gh release upload "$TAG" "${files[@]}" --clobber
+            exit 0
+          fi
+
+          notes="$(mktemp)"
+          cat > "$notes" <<'EOF'
+          预编译的 macOS 菜单栏应用（ad-hoc 签名）。zip 内是 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`、`lib/report.py`、`config.json`。请整份解压后打开 .app。
+
+          Gatekeeper 会拦截从浏览器下载的 ad-hoc 应用。解压后在该目录执行 `xattr -dr com.apple.quarantine .`，再打开。细节见仓库 README「从 Release 安装」。
+
+          校验：Release 里的 `.zip.sha256` 是 `shasum -a 256` 的结果。
+
+          本包没有自动更新。
+          EOF
+
+          args=(release create "$TAG" "${files[@]}" --title "$TAG" --notes-file "$notes")
+          case "$TAG" in
+            *-*) args+=(--prerelease) ;;
+          esac
+          gh "${args[@]}"

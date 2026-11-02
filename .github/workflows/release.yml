@@ -69,6 +69,6 @@ jobs:
 
           args=(release create "$TAG" "${files[@]}" --title "$TAG" --notes-file "$notes")
           case "$TAG" in
-            *-*) args+=(--prerelease) ;;
+            *-*) args+=(--prerelease --latest=false) ;;
           esac
           gh "${args[@]}"

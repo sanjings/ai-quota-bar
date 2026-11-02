@@ -395,6 +395,8 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
+`release.yml` 由这次 tag 推送启动。
+
 已有同名 Release 时，也可以在本地打包后补传：
 
 ```bash

@@ -73,6 +73,7 @@ quota.1m.sh 和 lib/report.py。把 AI Quota Bar.app 单独拷进「应用程序
 会找不到脚本，菜单没有数据。
 
 系统要求：macOS 12 或更新，以及本机的 /usr/bin/python3（安装 Xcode 命令行工具后就有）。
+GitHub Actions 打出的是 arm64。Intel Mac 请在本机按 README 从源码编译。
 
 打开：
   双击「AI Quota Bar.app」。

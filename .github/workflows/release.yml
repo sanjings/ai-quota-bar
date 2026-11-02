@@ -67,7 +67,7 @@ jobs:
           本包没有自动更新。
           EOF
 
-          args=(release create "$TAG" "${files[@]}" --title "$TAG" --notes-file "$notes")
+          args=(release create "$TAG" "${files[@]}" --title "$TAG" --notes-file "$notes" --target "$GITHUB_SHA")
           case "$TAG" in
             *-*) args+=(--prerelease --latest=false) ;;
           esac

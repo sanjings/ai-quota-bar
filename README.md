@@ -45,7 +45,7 @@ xattr -dr com.apple.quarantine .
 
 开机自启时，把这个解压目录里的 `.app` 加进登录项。配置改同目录的 `config.json`，缓存写在同目录的 `cache/`。
 
-要求仍是 macOS 12+，以及本机有 `/usr/bin/python3`（Xcode 命令行工具自带）。凭证配置与下面的源码安装相同。
+要求仍是 macOS 12+，以及本机有 `/usr/bin/python3`（Xcode 命令行工具自带）。`release.yml` 在 `macos-latest` 上打出来的是 **arm64** 可执行文件。Intel Mac 请按下面的「快速开始」在本机编译。凭证配置与源码安装相同。
 
 本仓库没有自动更新。下一版重新下载 zip，退出旧进程后再打开新目录里的 `.app`。
 

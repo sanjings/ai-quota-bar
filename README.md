@@ -29,25 +29,31 @@ Cursor 这一列的颜色看当前显示出来的百分比里较高的那一格�
 
 ## 从 Release 安装
 
-预编译包是一个 zip。里面有 ad-hoc 签名的 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`、`lib/report.py`、`config.json`。菜单栏程序只负责显示，取数仍由这些脚本完成，解压后要保持它们和 `.app` 在同一层。
-
 可下载的预编译包：[v0.2.0-rc.1](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.2.0-rc.1)。[v0.1.0](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.1.0) 只有源码包。正式版 `v0.2.0` 的打法见下文「发布」。
 
-下载 `AI-Quota-Bar-<版本>-macos.zip` 并解压，先看目录里的 `INSTALL.txt`，再双击 `AI Quota Bar.app`。
+zip 里是 ad-hoc 签名的 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`、`lib/report.py`、`config.json`，还有 `INSTALL.txt`。菜单栏程序只负责显示，取数仍由这些脚本完成。按下面的顺序安装即可；zip 里的 `INSTALL.txt` 是同一套说明的短版。
 
-这个包没有 Apple Developer ID，也没有公证。从浏览器下载后 Gatekeeper 会拦截，常见提示是「无法验证开发者」或「已损坏」。在解压目录执行：
+1. **下载 zip**。在上面的 Release 页面下载 `AI-Quota-Bar-<版本>-macos.zip`。同页的 `.sha256` 是 `shasum -a 256` 的结果，用来核对文件，可以不做。
+2. **解压，整份目录留在一起**。解压后得到一个文件夹，例如 `AI-Quota-Bar-0.2.0-rc.1-macos/`。这个文件夹可以整体放到任意位置，包括「应用程序」下面的子文件夹。**不要只把 `AI Quota Bar.app` 拖进「应用程序」**。`.app` 必须和同层的 `quota.1m.sh`、`lib/report.py`、`config.json` 留在同一目录；只拷走 `.app` 时，菜单没有数据。
+3. **先看 `INSTALL.txt`**。解压目录里的这份短说明覆盖同一套打开方式：Gatekeeper、配置文件、开机自启加哪一份。
+4. **去掉隔离属性**。这个包是 `codesign --sign -` 的 ad-hoc 签名，没有 Apple Developer ID，也没有公证。从浏览器下载后 Gatekeeper 会拦截，常见提示是「无法验证开发者」或「已损坏」。在解压目录打开「终端」，执行：
+
+   ```bash
+   xattr -dr com.apple.quarantine .
+   ```
+
+5. **打开 `.app`**。再双击 `AI Quota Bar.app`。系统设置 → 隐私与安全性里的「仍要打开」，以及右键 → 打开，有时也能过；仍提示已损坏时，回到第 4 步。
+6. **开机自启（可选）**。把**这个解压目录里的** `AI Quota Bar.app` 加进登录项，不要加另一份拷贝。macOS 13 及以后：系统设置 → 通用 → 登录项（较新版本里叫「登录项与扩展」）。macOS 12：系统偏好设置 → 用户与群组 → 登录项。
+
+配置改同目录的 `config.json`，改完无需重启，下一轮刷新生效。缓存写在同目录的 `cache/`，第一次取数后出现。Cursor / DeepSeek 的凭证写在本机钥匙串，步骤与源码安装相同，见下文「配置」。没配 Cursor token、或本机没有 Codex 会话时，对应那一列会显示「不可用」或读取失败，其余照常，这不是安装失败。
+
+要求：macOS 12 或更新，以及本机有 `/usr/bin/python3`（安装 Xcode 命令行工具后就有）。`release.yml` 在 `macos-latest` 上打出来的是 **arm64** 可执行文件。Intel Mac 跑不了这个包，请按下面的「快速开始」在本机编译。
+
+本仓库没有自动更新。下一版重新下载 zip，先退出旧进程，再打开新目录里的 `.app`：
 
 ```bash
-xattr -dr com.apple.quarantine .
+pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar"
 ```
-
-然后再打开 `.app`。系统设置 → 隐私与安全性里的「仍要打开」，以及右键 → 打开，有时也能过；仍提示已损坏时，用上面的 `xattr`。
-
-开机自启时，把这个解压目录里的 `.app` 加进登录项。配置改同目录的 `config.json`，缓存写在同目录的 `cache/`。
-
-要求仍是 macOS 12+，以及本机有 `/usr/bin/python3`（Xcode 命令行工具自带）。`release.yml` 在 `macos-latest` 上打出来的是 **arm64** 可执行文件。Intel Mac 请按下面的「快速开始」在本机编译。凭证配置与源码安装相同。
-
-本仓库没有自动更新。下一版重新下载 zip，退出旧进程后再打开新目录里的 `.app`。
 
 ## 快速开始
 
@@ -66,7 +72,7 @@ open native/"AI Quota Bar.app"
 
 `/tmp/make_icon` 按源文件位置把 `AppIcon.iconset` 写到 `native/`。跑完应能看到 `native/AppIcon.iconset`；没有的话，确认当前目录是仓库根。`iconutil` 再打成 `native/AppIcon.icns`。`bash native/build.sh` 用脚本自身所在目录编译，产物是 `native/AI Quota Bar.app`（ad-hoc 签名）。
 
-程序从可执行文件向上逐级查找 `quota.1m.sh`。源码树里 `.app` 在 `native/`，脚本在仓库根；Release zip 里脚本与 `.app` 同级。两条都能找到。把 `.app` 放到一个没有 `quota.1m.sh` 的目录（例如只拷进「应用程序」）时，菜单没有数据。
+程序从可执行文件向上逐级查找 `quota.1m.sh`。源码树里 `.app` 在 `native/`，脚本在仓库根；Release zip 里脚本与 `.app` 同级。两条都能找到。把 `.app` 单独放到一个没有 `quota.1m.sh` 的目录（例如只把 `.app` 拷进「应用程序」，而不是整份解压目录）时，菜单没有数据。从 Release 安装时，整份目录的放法见上文第 2 步。
 
 然后在菜单栏点开这一项配置。菜单里的入口会先向对应接口校验，通过才写入 Keychain。命令行里 Cursor 同样先校验；下面这条 DeepSeek 的 `security` 命令不校验，粘错了要等下一轮刷新才看得到失败。服务名、校验规则和两种入口的差别见下文「配置」。
 
@@ -88,7 +94,7 @@ security add-generic-password -U -s deepseek-api-key -a "$USER" -w   # DeepSeek�
 > ChatGPT 额度不用配凭证，读的是本机 Codex CLI 会话；Cursor / DeepSeek 的凭证说明见下文。Grok Bot 不另配凭证，和 Cursor 共用 `cursor-access-token`。
 > 凭证只进本机 Keychain，边界见 [SECURITY.md](SECURITY.md)。
 
-**开机自启**：把 `native/AI Quota Bar.app` 这个路径加进登录项。macOS 13 及以后：系统设置 → 通用 → 登录项（较新版本里叫「登录项与扩展」）。macOS 12：系统偏好设置 → 用户与群组 → 登录项。
+**开机自启**：把 `native/AI Quota Bar.app` 这个路径加进登录项。从 Release 安装的，改为解压目录里的那一份（见上文第 6 步），不要加另一份拷贝。macOS 13 及以后：系统设置 → 通用 → 登录项（较新版本里叫「登录项与扩展」）。macOS 12：系统偏好设置 → 用户与群组 → 登录项。
 
 **退出**：菜单栏点开 → 按 Esc 收起菜单，或
 

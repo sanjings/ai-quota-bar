@@ -69,14 +69,15 @@ cat > "$DEST/INSTALL.txt" <<EOF
 AI Quota Bar ${ZIP_VERSION}（macOS）
 
 这个目录要整份保留。.app 只负责菜单栏显示，额度数据来自同目录的
-quota.1m.sh 和 lib/report.py。把 AI Quota Bar.app 单独拷进「应用程序」
-会找不到脚本，菜单没有数据。
+quota.1m.sh 和 lib/report.py，配置在同目录的 config.json。
+整份文件夹可以放到任意位置，包括「应用程序」下面的子文件夹。
+不要只把 AI Quota Bar.app 拖进「应用程序」：单独拷走会找不到脚本，菜单没有数据。
 
 系统要求：macOS 12 或更新，以及本机的 /usr/bin/python3（安装 Xcode 命令行工具后就有）。
 GitHub Actions 打出的是 arm64。Intel Mac 请在本机按 README 从源码编译。
 
 打开：
-  双击「AI Quota Bar.app」。
+  先做下面的 Gatekeeper 步骤，再双击「AI Quota Bar.app」。
 
 Gatekeeper：
   这个 .app 是 ad-hoc 签名（codesign --sign -），没有 Apple Developer ID，也没有公证。
@@ -85,7 +86,7 @@ Gatekeeper：
 
     xattr -dr com.apple.quarantine .
 
-  然后再次双击。也可以在系统设置 → 隐私与安全性里点「仍要打开」。
+  然后双击。也可以在系统设置 → 隐私与安全性里点「仍要打开」。
   右键 → 打开，有时也能过；仍提示已损坏时，用上面的 xattr。
 
 配置与缓存：
@@ -97,6 +98,8 @@ Gatekeeper：
 
 开机自启：
   把本目录里的 AI Quota Bar.app 加进登录项，不要加另一份拷贝。
+  macOS 13 及以后：系统设置 → 通用 → 登录项（较新版本里叫「登录项与扩展」）。
+  macOS 12：系统偏好设置 → 用户与群组 → 登录项。
 
 更新：
   没有自动更新。下载新的 zip 后，先退出旧进程，再打开新目录里的 .app：

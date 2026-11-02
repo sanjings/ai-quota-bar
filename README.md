@@ -1,21 +1,21 @@
 # AI Quota Bar
 
-macOS 菜单栏常驻小组件，同时显示 **ChatGPT（Codex）订阅额度**、**Cursor 订阅额度双池** 与 **DeepSeek 账户余额**。
+macOS 菜单栏常驻小组件，同时显示 **ChatGPT（Codex）订阅额度**、**Cursor 订阅额度**（含旧套餐上独立的 Grok Bot 一周额度）与 **DeepSeek 账户余额**。
 
 ```
-ChatGPT Plus  Cursor  DeepSeek    ← 菜单栏常驻，标签+数值两行显示
-4%/4%         92%/42% ¥2.79
+ChatGPT    Cursor / Grok Bot     DeepSeek    ← 菜单栏常驻，标签+数值两行
+4%/4%      92%/42%/8%            ¥2.79
 ```
 
-两列百分比的含义：
+菜单栏百分比的含义：
 
-| 标签 | 左边 | 右边 |
-|---|---|---|
-| ChatGPT Plus | 5 小时额度已用 | 周额度已用 |
-| Cursor | Cursor Models 已用 | Others Models 已用 |
-| DeepSeek | 账户余额（不是百分比） | |
+| 标签 | 数字 |
+|---|---|
+| ChatGPT | 5 小时额度已用 / 周额度已用 |
+| Cursor / Grok Bot | Cursor Models / Others Models / Grok Bot。没有独立的 Grok Bot 额度时，标题退回「Cursor」，数字只有前两个 |
+| DeepSeek | 账户余额（不是百分比） |
 
-点击菜单栏项可展开详情：额度进度条、重置倒计时、DeepSeek 充值/赠送拆分、各服务用量面板直达链接。三个数据源互相独立，只配自己要用的即可。没配 Cursor token、或本机没有 Codex 会话时，对应那一列会显示「不可用」或读取失败，其余照常，这不是安装失败。
+点击菜单栏项可展开详情：额度进度条、重置倒计时、Grok Bot 的一周额度、DeepSeek 充值/赠送拆分、各服务用量面板直达链接。三个数据源互相独立，只配自己要用的即可。没配 Cursor token、或本机没有 Codex 会话时，对应那一列会显示「不可用」或读取失败，其余照常，这不是安装失败。
 
 ---
 
@@ -71,7 +71,8 @@ pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar"
 | 项目 | 获取方式 | 凭证 | 说明 |
 |---|---|---|---|
 | ChatGPT 额度 | **本地解析** `~/.codex/sessions` 会话记录 | 无需（订阅登录态由 Codex CLI 维护） | 无网络请求；数据随 Codex 任务结束更新 |
-| Cursor 双池额度 | `api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage` | macOS Keychain，service = `cursor-access-token`（**需手动配置一次**） | 未公开接口，已做容错 |
+| Cursor 双池额度 | `api2.cursor.sh/.../GetCurrentPeriodUsage` | macOS Keychain，service = `cursor-access-token`（**需手动配置一次**） | 月度 Models / Others。未公开接口 |
+| Grok Bot 一周额度 | `api2.cursor.sh/.../GetSandUsageStatus` | 同一条 Cursor token | 旧套餐上的独立额度。下拉里放在 Cursor 的「重置倒计时」之后，自带「重置时间 · 倒计时」。没有独立额度时不显示 |
 | DeepSeek 余额 | `api.deepseek.com/user/balance`（官方公开接口） | macOS Keychain 中的 API Key | |
 
 **关于 Cursor 凭证的边界（重要）**：额度用的 token **不从 Cursor 内部存储读取，也不解密**。
@@ -166,7 +167,7 @@ Cursor 的额度查询需要你的**订阅登录态**（Bearer token）。它只
 **① 在菜单栏里配置（推荐）** —— 下拉菜单点「配置 Cursor token」，弹窗里粘贴后保存。
 弹窗内还有「从剪贴板填入」，可以先复制再点它。保存前会**先验证**：
 通过才写入 Keychain（服务名 `cursor-access-token`，账户名是当前用户），失败只提示原因、不覆盖原有可用 token。
-配置成功后菜单里的入口变成「更换 token」，换账号时不必去终端删条目。
+配置成功后，有效期和更换合成一行，整行可点：「Token 有效至 … · 更换 token」。换账号时不必去终端删条目。
 
 **② 命令行配置**：
 
@@ -189,8 +190,8 @@ bash scripts/cursor-token.sh --check
 
 | 情况 | 表现 |
 |---|---|
-| 还没到期，剩余不足 7 天，接口仍返回额度 | 下拉里琥珀色「Token N 天后过期」，入口是「更换 token」 |
-| 接口仍返回额度，但 token 里的 `exp` 已过 | 「Token 已过期」，并提示点「更换 token」 |
+| 还没到期，剩余不足 7 天，接口仍返回额度 | 同一行：琥珀色「Token N 天后过期 … · 更换 token」 |
+| 接口仍返回额度，但 token 里的 `exp` 已过 | 同一行：红色「Token 已过期 … · 更换 token」 |
 | 接口返回 401（到期被拒，或在 Cursor 里退出 / 重新登录） | 「Cursor 不可用 · token 已失效」，入口是「配置 Cursor token」 |
 | Keychain 里没有 `cursor-access-token` | 「Cursor 不可用 · 未配置 token」，入口同样是「配置 Cursor token」 |
 
@@ -232,7 +233,7 @@ open "$PROJ/native/AI Quota Bar.app"
 
 接口返回了 401：token 到期（约 2 个月）或在 Cursor 里重新登录过。点「配置 Cursor token」更新。
 保存前会先验证，通过后用 `security add-generic-password -U` 覆盖原来那条（服务名 `cursor-access-token`）。
-额度数字还在、菜单里写着「Token 已过期」时，点「更换 token」。
+额度数字还在时，点「Token 有效至 … · 更换 token」这一整行。接口已经 401 时，点「配置 Cursor token」。
 
 **显示 `ChatGPT Plus 读取失败`**
 

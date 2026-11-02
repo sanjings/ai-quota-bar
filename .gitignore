@@ -3,10 +3,11 @@ cache/
 __pycache__/
 *.pyc
 
-# 构建产物（build.sh 生成）
+# 构建产物（build.sh / package.sh 生成）
 native/AI Quota Bar.app/
 native/AppIcon.icns
 native/AppIcon.iconset/
+dist/
 
 # 系统杂项
 .DS_Store

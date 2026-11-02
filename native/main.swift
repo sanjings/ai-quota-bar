@@ -14,23 +14,21 @@ import Cocoa
 
 // MARK: - 配置
 
-/// 定位 quota.1m.sh：bundle 在 <项目>/native/AI Quota Bar.app，脚本在项目根。
-/// 优先 Bundle.main 推导（任何人 clone 到任意目录都可用）；
-/// 推导失败（如直接跑裸二进制调试）回退到环境变量 AI_QUOTA_BAR_HOME 或内置默认路径。
+/// 定位 quota.1m.sh。从可执行文件向上逐级查找，命中即停：
+/// - 源码树：`<仓库>/native/AI Quota Bar.app`，脚本在仓库根
+/// - Release zip：解压目录里 `.app` 与 `quota.1m.sh` 同级
+/// 都找不到时回退到环境变量 AI_QUOTA_BAR_HOME，再不行则交给 PATH。
 private func locateScriptPath() -> String {
-    // .../native/AI Quota Bar.app/Contents/MacOS/xxx → 上跳 5 级 = 项目根
-    // （首次删除去掉的是文件名，之后依次是 MacOS/、Contents/、.app/、native/）
     if let execURL = Bundle.main.executableURL {
-        let projectRoot = execURL
-            .deletingLastPathComponent()      // MacOS/（同时去掉可执行文件名）
-            .deletingLastPathComponent()      // Contents/
-            .deletingLastPathComponent()      // AI Quota Bar.app/
-            .deletingLastPathComponent()      // native/
-            .deletingLastPathComponent()      // 项目根
-        let candidate = projectRoot
-            .appendingPathComponent("quota.1m.sh").path
-        if FileManager.default.fileExists(atPath: candidate) {
-            return candidate
+        var directory = execURL
+        // 第一次去掉可执行文件名，之后是 MacOS/、Contents/、.app/、再往上。
+        // 8 级盖住「native/ + 仓库根」，并给解压目录外面多留几层。
+        for _ in 0..<8 {
+            directory.deleteLastPathComponent()
+            let candidate = directory.appendingPathComponent("quota.1m.sh").path
+            if FileManager.default.fileExists(atPath: candidate) {
+                return candidate
+            }
         }
     }
     if let env = ProcessInfo.processInfo.environment["AI_QUOTA_BAR_HOME"] {

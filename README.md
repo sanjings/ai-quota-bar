@@ -27,9 +27,31 @@ Cursor 这一列的颜色看当前显示出来的百分比里较高的那一格�
 
 ---
 
+## 从 Release 安装
+
+预编译包是一个 zip。里面有 ad-hoc 签名的 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`、`lib/report.py`、`config.json`。菜单栏程序只负责显示，取数仍由这些脚本完成，解压后要保持它们和 `.app` 在同一层。
+
+可下载的预编译包：[v0.2.0-rc.1](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.2.0-rc.1)。[v0.1.0](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.1.0) 只有源码包。正式版 `v0.2.0` 的打法见下文「发布」。
+
+下载 `AI-Quota-Bar-<版本>-macos.zip` 并解压，先看目录里的 `INSTALL.txt`，再双击 `AI Quota Bar.app`。
+
+这个包没有 Apple Developer ID，也没有公证。从浏览器下载后 Gatekeeper 会拦截，常见提示是「无法验证开发者」或「已损坏」。在解压目录执行：
+
+```bash
+xattr -dr com.apple.quarantine .
+```
+
+然后再打开 `.app`。系统设置 → 隐私与安全性里的「仍要打开」，以及右键 → 打开，有时也能过；仍提示已损坏时，用上面的 `xattr`。
+
+开机自启时，把这个解压目录里的 `.app` 加进登录项。配置改同目录的 `config.json`，缓存写在同目录的 `cache/`。
+
+要求仍是 macOS 12+，以及本机有 `/usr/bin/python3`（Xcode 命令行工具自带）。`release.yml` 在 `macos-latest` 上打出来的是 **arm64** 可执行文件。Intel Mac 请按下面的「快速开始」在本机编译。凭证配置与源码安装相同。
+
+本仓库没有自动更新。下一版重新下载 zip，退出旧进程后再打开新目录里的 `.app`。
+
 ## 快速开始
 
-当前发布是 [v0.1.0](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.1.0)（[全部 Release](https://github.com/sanjings/ai-quota-bar/releases)）。该页不附带预编译 `.app`，说明里的「更多细节见 README」指的就是本文件。Release 页上的安装命令是摘要，没有包含生成 `AppIcon.icns`。按本文件的步骤安装。下面的命令都在仓库根目录执行。
+从源码编译时，下面的命令都在仓库根目录执行。[v0.1.0](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.1.0) 的 Release 说明是摘要，没有包含生成 `AppIcon.icns`。按本文件的步骤安装。
 
 `native/AppIcon.icns` 在 `.gitignore` 里，克隆下来没有这个文件。`native/build.sh` 只把它拷进 `.app`，文件不存在时会停在「图标」那一步（`cp: native/AppIcon.icns: No such file or directory`）。第一次构建先生成图标；`native/AppIcon.icns` 已经在时，可以跳过 `swiftc` 和 `iconutil` 两行。
 
@@ -42,7 +64,9 @@ bash native/build.sh
 open native/"AI Quota Bar.app"
 ```
 
-`/tmp/make_icon` 按源文件位置把 `AppIcon.iconset` 写到 `native/`。跑完应能看到 `native/AppIcon.iconset`；没有的话，确认当前目录是仓库根。`iconutil` 再打成 `native/AppIcon.icns`。`bash native/build.sh` 用脚本自身所在目录编译，产物是 `native/AI Quota Bar.app`（ad-hoc 签名，本机运行）。
+`/tmp/make_icon` 按源文件位置把 `AppIcon.iconset` 写到 `native/`。跑完应能看到 `native/AppIcon.iconset`；没有的话，确认当前目录是仓库根。`iconutil` 再打成 `native/AppIcon.icns`。`bash native/build.sh` 用脚本自身所在目录编译，产物是 `native/AI Quota Bar.app`（ad-hoc 签名）。
+
+程序从可执行文件向上逐级查找 `quota.1m.sh`。源码树里 `.app` 在 `native/`，脚本在仓库根；Release zip 里脚本与 `.app` 同级。两条都能找到。把 `.app` 放到一个没有 `quota.1m.sh` 的目录（例如只拷进「应用程序」）时，菜单没有数据。
 
 然后在菜单栏点开这一项配置。菜单里的入口会先向对应接口校验，通过才写入 Keychain。命令行里 Cursor 同样先校验；下面这条 DeepSeek 的 `security` 命令不校验，粘错了要等下一轮刷新才看得到失败。服务名、校验规则和两种入口的差别见下文「配置」。
 
@@ -52,8 +76,8 @@ security add-generic-password -U -s deepseek-api-key -a "$USER" -w   # DeepSeek�
 ```
 
 > 要求：macOS 12+（`native/Info.plist` 的 `LSMinimumSystemVersion`）。Xcode 命令行工具提供 `swiftc`、`iconutil` 和 `/usr/bin/python3`。取数脚本 `quota.1m.sh` 按这个顺序找解释器：`/usr/bin/python3`、`/opt/homebrew/bin/python3`、`/usr/local/bin/python3`。`scripts/cursor-token.sh` 固定使用 `/usr/bin/python3`。
-> **把 `AI Quota Bar.app` 留在 `native/`。** 可执行文件是 `native/AI Quota Bar.app/Contents/MacOS/ai-quota-bar`。程序从这个路径向上 5 级到仓库根，再找 `quota.1m.sh`。拷走，或改成别的层级（直接放在仓库根，或在 `native/` 下面再套一层目录），都找不到脚本，菜单没有数据。
-> 若必须把 `.app` 放到别处：先退出已在运行的实例，再让新进程带上仓库根目录。已经在跑的实例不会改环境。登录项由系统拉起，读不到这个变量，开机自启请用留在 `native/` 里的那一份。在仓库根目录执行（`$(pwd)` 就是仓库根，目录里要有 `quota.1m.sh`）：
+> 可执行文件是 `AI Quota Bar.app/Contents/MacOS/ai-quota-bar`。它向上查找 `quota.1m.sh`，源码构建时该文件在仓库根，所以开发副本放在 `native/`。
+> 若 `.app` 必须放在找不到脚本的位置：先退出已在运行的实例，再让新进程带上仓库根目录。已经在跑的实例不会改环境。登录项由系统拉起，读不到这个变量；开机自启请用解压目录或 `native/` 里、旁边能找到 `quota.1m.sh` 的那一份。在仓库根目录执行（`$(pwd)` 就是仓库根，目录里要有 `quota.1m.sh`）：
 >
 > ```bash
 > pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar" || true
@@ -297,6 +321,7 @@ ChatGPT 部分停在旧值属正常（见上文「ChatGPT 数据的边界」）�
   │   ├── AppIcon.icns         #   构建用图标（iconutil 生成，git 忽略）
   │   ├── Info.plist           #   LSUIElement=1（无 Dock 图标）；最低系统 12.0
   │   ├── build.sh             #   编译 + 打包（拷贝已有的 AppIcon.icns，不负责生成）
+  │   ├── package.sh           #   生成 Release zip（图标 + build.sh + 同层脚本）
   │   └── AI Quota Bar.app     #   应用本体（构建产物，git 忽略）
   ├── SECURITY.md              # 凭证处理与数据流向声明
   └── README.md                # 本文件
@@ -344,7 +369,41 @@ security delete-generic-password -s deepseek-api-key      # 若配置过 DeepSee
 
 菜单栏应用是 Swift，依赖 Xcode 和 macOS SDK。这条流水线故意不完整编译它，也不运行 `native/build.sh`。一次绿色的 CI 只说明上面三项通过，并不表示 macOS 构建已经验证过。本机仍按「快速开始」在 macOS 上编译。
 
-以后可以另加一个 `macos-latest` job 来跑完整编译；那会更慢，也更耗 Actions 额度，留到单独的改动里再做。
+打版本 tag 时另有一条流水线：[`.github/workflows/release.yml`](.github/workflows/release.yml) 在 `macos-latest` 上执行 `bash native/package.sh`，把 zip 挂到同名 Release。它不替代上面的 ubuntu 检查。
+
+---
+
+## 发布
+
+维护者在合并后的 `main` 上推送版本 tag 后，`release.yml` 会构建 zip。tag 形如 `v0.2.0`。带连字符的 tag（如 `v0.2.0-rc.1`）会标成预发布。Release 已经存在（含草稿）时，工作流只上传产物。
+
+本地打出同一个 zip：
+
+```bash
+APP_VERSION=0.2.0 bash native/package.sh
+# 产物：dist/AI-Quota-Bar-0.2.0-macos.zip 与同名的 .sha256
+```
+
+`package.sh` 把 `.app` 写到临时目录，不覆盖 `native/AI Quota Bar.app`。日常改完 Swift 仍用 `bash native/build.sh`。
+
+正式版 `v0.2.0` 从进入 `main` 的这次改动再打。预发布 `v0.2.0-rc.1` 用来先挂上可下载的 zip，正式 tag 留给 `main`：
+
+```bash
+git checkout main
+git pull origin main
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+`release.yml` 由这次 tag 推送启动。
+
+已有同名 Release 时，也可以在本地打包后补传：
+
+```bash
+gh release upload v0.2.0 dist/AI-Quota-Bar-0.2.0-macos.zip dist/AI-Quota-Bar-0.2.0-macos.zip.sha256 --clobber
+```
+
+自动更新不在这条流水线里。
 
 ---
 

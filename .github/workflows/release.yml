@@ -1,7 +1,7 @@
 name: Release
 
 # 版本 tag（v*）推送到 GitHub 时，在 macOS 上打出与 native/package.sh 相同的 zip，
-# 并挂到同名 Release。不实现自动更新。
+# 并挂到同名 Release。应用只提示新版本并打开页面，这里不做静默安装。
 # 日常 push / PR 仍走 ci.yml（ubuntu，不编译 Swift）。
 
 on:
@@ -58,13 +58,13 @@ jobs:
 
           notes="$(mktemp)"
           cat > "$notes" <<'EOF'
-          预编译的 macOS 菜单栏应用（ad-hoc 签名）。zip 内是 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`、`lib/report.py`、`config.json`。请整份解压后打开 .app。
+          预编译的 macOS 菜单栏应用（ad-hoc 签名）。zip 内是 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`、`lib/report.py`、`lib/release_check.py`、`config.json`。请整份解压后打开 .app。
 
           Gatekeeper 会拦截从浏览器下载的 ad-hoc 应用。解压后在该目录执行 `xattr -dr com.apple.quarantine .`，再打开。细节见仓库 README「从 Release 安装」。
 
           校验：Release 里的 `.zip.sha256` 是 `shasum -a 256` 的结果。
 
-          本包没有自动更新。
+          应用会在菜单里提示更新的正式 Release，点一下打开 Release 页面。不会自动下载或安装。
           EOF
 
           args=(release create "$TAG" "${files[@]}" --title "$TAG" --notes-file "$notes" --target "$GITHUB_SHA")

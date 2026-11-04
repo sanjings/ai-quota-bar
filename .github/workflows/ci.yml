@@ -54,6 +54,7 @@ jobs:
                   )
                   print(f"py_compile ok: {path.relative_to(root)}")
           PY
+          python3 lib/release_check.py --self-test
 
       - name: Shell syntax check
         run: |
@@ -93,10 +94,12 @@ jobs:
           required = [
               Path("native/main.swift"),
               Path("native/QuotaBarView.swift"),
+              Path("native/UpdateCheck.swift"),
               Path("native/make_icon.swift"),
               Path("native/build.sh"),
               Path("native/package.sh"),
               Path("native/Info.plist"),
+              Path("lib/release_check.py"),
           ]
           missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0]
           if missing:
@@ -105,9 +108,11 @@ jobs:
           build = Path("native/build.sh").read_text(encoding="utf-8")
           if "swiftc" not in build:
               sys.exit("native/build.sh does not invoke swiftc")
+          if "UpdateCheck.swift" not in build:
+              sys.exit("native/build.sh does not compile UpdateCheck.swift")
 
           package = Path("native/package.sh").read_text(encoding="utf-8")
-          for token in ("build.sh", "ditto", "quota.1m.sh"):
+          for token in ("build.sh", "ditto", "quota.1m.sh", "release_check.py"):
               if token not in package:
                   sys.exit(f"native/package.sh missing {token}")
 

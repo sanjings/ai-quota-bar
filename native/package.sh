@@ -14,7 +14,8 @@
 #   dist/AI-Quota-Bar-<版本>-macos.zip.sha256
 #
 # .app 写到临时目录，不覆盖 native/AI Quota Bar.app（那个路径可能正挂在菜单栏上）。
-# 签名是 ad-hoc，没有自动更新。Gatekeeper 说明见 zip 里的 INSTALL.txt 和 README。
+# 签名是 ad-hoc。应用只会提示新的正式 Release 并打开页面，不会自行替换 .app。
+# Gatekeeper 说明见 zip 里的 INSTALL.txt 和 README。
 
 set -euo pipefail
 
@@ -60,6 +61,7 @@ APP_OUTPUT="$DEST/$APP_NAME.app" APP_VERSION="$ZIP_VERSION" bash "$NATIVE/build.
 
 cp "$BASE_DIR/quota.1m.sh" "$DEST/quota.1m.sh"
 cp "$BASE_DIR/lib/report.py" "$DEST/lib/report.py"
+cp "$BASE_DIR/lib/release_check.py" "$DEST/lib/release_check.py"
 cp "$BASE_DIR/config.json" "$DEST/config.json"
 cp "$BASE_DIR/LICENSE" "$DEST/LICENSE"
 cp "$BASE_DIR/SECURITY.md" "$DEST/SECURITY.md"
@@ -69,7 +71,8 @@ cat > "$DEST/INSTALL.txt" <<EOF
 AI Quota Bar ${ZIP_VERSION}（macOS）
 
 这个目录要整份保留。.app 只负责菜单栏显示，额度数据来自同目录的
-quota.1m.sh 和 lib/report.py，配置在同目录的 config.json。
+quota.1m.sh 和 lib/report.py，版本提示来自 lib/release_check.py，
+配置在同目录的 config.json。
 整份文件夹可以放到任意位置，包括「应用程序」下面的子文件夹。
 不要只把 AI Quota Bar.app 拖进「应用程序」：单独拷走会找不到脚本，菜单没有数据。
 
@@ -102,7 +105,9 @@ Gatekeeper：
   macOS 12：系统偏好设置 → 用户与群组 → 登录项。
 
 更新：
-  没有自动更新。下载新的 zip 后，先退出旧进程，再打开新目录里的 .app：
+  程序不会自动下载或替换 .app。有更新的正式 Release 时，下拉菜单顶部多一行
+  「发现新版本 … · 打开 Release」，点一下用浏览器打开该页面。问不到时不提示，
+  额度显示不受影响。安装仍是下载新的 zip，先退出旧进程，再打开新目录里的 .app：
 
     pkill -f 'AI Quota Bar.app/Contents/MacOS/ai-quota-bar'
 EOF

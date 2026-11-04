@@ -1,7 +1,9 @@
 #!/bin/bash
 # 取数入口（被 native/AI Quota Bar.app 调用，参数为 --json）。
 #
-# 本层只做一件事：找到可用的 python3 并把参数透传给 lib/report.py。
+# 找到可用的 python3，再把参数透传给 lib/report.py。
+# --check-release 例外：转给 lib/release_check.py，只问有没有更新的正式 Release。
+# 问失败时它打印 {"ok": false}，不走额度输出。
 # 之所以需要这一层而非直接调用 python3：GUI 程序由 launchd 之类的方式拉起时
 # PATH 与终端不同，不能依赖 `env python3`，必须显式探测解释器位置。
 #
@@ -34,6 +36,19 @@ do
         break
     fi
 done
+
+# 版本检查和额度取数分开。没有 python 时也只回一行 JSON，避免菜单把
+# 额度错误文案当成版本结果。
+if [ "${1:-}" = "--check-release" ]; then
+    if [ -z "$PYTHON" ]; then
+        printf '%s\n' '{"ok": false}'
+        exit 0
+    fi
+    exec "$PYTHON" "$BASE_DIR/lib/release_check.py" "$@"
+    # exec 失败才会走到这里（例如脚本被删）。不要落回额度取数。
+    printf '%s\n' '{"ok": false}'
+    exit 0
+fi
 
 if [ -z "$PYTHON" ]; then
     printf '额度 -- | color=#A32D2D\n'

@@ -44,6 +44,8 @@ private let scriptPath = locateScriptPath()
 // 网络类（Cursor/DeepSeek）靠 300s 缓存挡住不重复发请求，
 // 本地类（ChatGPT 扫 Codex 会话文件）20s TTL 必然过期、每次重读，成本≈0。
 private let refreshSeconds: TimeInterval = 60
+// 登录项会挂一整天。版本检查和 60 秒的额度刷新不是一条路径。
+private let releaseCheckInterval: TimeInterval = 6 * 60 * 60
 
 // MARK: - 数据结构（对应 Python 端 build_payload）
 
@@ -152,6 +154,10 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
     private var timer: Timer?
     private var payload: Payload?
     private var isFetching = false
+    /// 比当前构建新的正式 Release。没有，或这次没问成，就是 nil。
+    private var updateNotice: ReleaseNotice?
+    private var isCheckingRelease = false
+    private var releaseTimer: Timer?
     /// 配置弹窗里的输入框（「从剪贴板填入」按钮需要引用它）
     private weak var tokenField: NSSecureTextField?
 
@@ -174,6 +180,14 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
+
+        // 额度刷新已经在上面启动。版本检查失败只是菜单里不出现那一行。
+        checkForRelease()
+        let releaseTimer = Timer(timeInterval: releaseCheckInterval, repeats: true) { [weak self] _ in
+            self?.checkForRelease()
+        }
+        RunLoop.main.add(releaseTimer, forMode: .common)
+        self.releaseTimer = releaseTimer
 
         // 系统外观切换时重绘（否则深色模式下颜色不会跟着变）
         DistributedNotificationCenter.default().addObserver(
@@ -232,6 +246,48 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
         return try? JSONDecoder().decode(Payload.self, from: data)
     }
 
+    // MARK: 版本提示（与额度刷新无关）
+
+    /// 问 GitHub 有没有更新的正式 Release。不碰 isFetching / payload。
+    private func checkForRelease() {
+        guard !isCheckingRelease else { return }
+        guard let current = ReleaseCheck.currentMarketingVersion() else { return }
+        isCheckingRelease = true
+        let script = scriptPath
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let outcome = ReleaseCheck.run(scriptPath: script, current: current)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isCheckingRelease = false
+                switch outcome {
+                case .update(let notice):
+                    self.updateNotice = notice
+                case .upToDate:
+                    self.updateNotice = nil
+                case .failed:
+                    break
+                }
+            }
+        }
+    }
+
+    /// 插在下拉菜单顶部。整行可点，打开 Release 页，不安装。
+    private func addReleaseNotice(to menu: NSMenu) {
+        guard let notice = updateNotice else { return }
+        let item = NSMenuItem(
+            title: "发现新版本 \(notice.tag) · 打开 Release",
+            action: #selector(openLink(_:)),
+            keyEquivalent: "")
+        item.target = self
+        item.representedObject = notice.url
+        item.isEnabled = true
+        menu.insertItem(item, at: 0)
+        // 额度菜单各段前面已经有分隔线，这里不再叠一条。
+        if menu.items.count > 1 && !menu.items[1].isSeparatorItem {
+            menu.insertItem(.separator(), at: 1)
+        }
+    }
+
     // MARK: 菜单栏两行标题（自绘）
 
     private func apply(_ payload: Payload) {
@@ -255,7 +311,9 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
             refresh()
             return
         }
-        statusItem.menu = Self.buildMenu(payload, target: self)
+        let menu = Self.buildMenu(payload, target: self)
+        addReleaseNotice(to: menu)
+        statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
     }

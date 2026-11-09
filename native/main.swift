@@ -288,6 +288,33 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// 设置不进 Python 菜单：它打开的是本 App 的窗口，和这次取数结果无关。
+    private func addSettingsItem(to menu: NSMenu) {
+        if menu.items.isEmpty || !menu.items[menu.items.count - 1].isSeparatorItem {
+            menu.addItem(.separator())
+        }
+        let item = NSMenuItem(title: "设置…", action: #selector(openSettings), keyEquivalent: "")
+        item.target = self
+        item.isEnabled = true
+        menu.addItem(item)
+    }
+
+    @objc private func openSettings() {
+        guard let path = ConfigStore.configPath(besideScript: scriptPath) else {
+            showMessage(
+                "找不到配置",
+                "没有定位到取数脚本所在目录，无法读写 config.json。",
+                style: .warning)
+            return
+        }
+        // 菜单收起会让这个无 Dock 的 App 失活，同步开窗口会被一起藏起来。
+        DispatchQueue.main.async { [weak self] in
+            SettingsWindowController.show(configPath: path) { [weak self] in
+                self?.refresh()
+            }
+        }
+    }
+
     // MARK: 菜单栏两行标题（自绘）
 
     private func apply(_ payload: Payload) {
@@ -313,6 +340,7 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
         }
         let menu = Self.buildMenu(payload, target: self)
         addReleaseNotice(to: menu)
+        addSettingsItem(to: menu)
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil

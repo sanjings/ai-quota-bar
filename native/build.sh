@@ -30,7 +30,8 @@ mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 echo "==> 编译"
 swiftc -O -o "$BUNDLE/Contents/MacOS/$BINARY_NAME" \
     "$BASE_DIR/main.swift" "$BASE_DIR/QuotaBarView.swift" \
-    "$BASE_DIR/UpdateCheck.swift" -framework Cocoa
+    "$BASE_DIR/UpdateCheck.swift" "$BASE_DIR/SettingsConfig.swift" \
+    "$BASE_DIR/SettingsWindow.swift" -framework Cocoa
 
 echo "==> 写入 Info.plist"
 cp "$BASE_DIR/Info.plist" "$BUNDLE/Contents/Info.plist"

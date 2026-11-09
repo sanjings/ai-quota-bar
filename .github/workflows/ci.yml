@@ -95,6 +95,9 @@ jobs:
               Path("native/main.swift"),
               Path("native/QuotaBarView.swift"),
               Path("native/UpdateCheck.swift"),
+              Path("native/SettingsConfig.swift"),
+              Path("native/SettingsConfigSelfTest.swift"),
+              Path("native/SettingsWindow.swift"),
               Path("native/make_icon.swift"),
               Path("native/build.sh"),
               Path("native/package.sh"),
@@ -108,8 +111,11 @@ jobs:
           build = Path("native/build.sh").read_text(encoding="utf-8")
           if "swiftc" not in build:
               sys.exit("native/build.sh does not invoke swiftc")
-          if "UpdateCheck.swift" not in build:
-              sys.exit("native/build.sh does not compile UpdateCheck.swift")
+          for name in ("UpdateCheck.swift", "SettingsConfig.swift", "SettingsWindow.swift"):
+              if name not in build:
+                  sys.exit(f"native/build.sh does not compile {name}")
+          if "SettingsConfigSelfTest.swift" in build:
+              sys.exit("native/build.sh must not compile SettingsConfigSelfTest.swift")
 
           package = Path("native/package.sh").read_text(encoding="utf-8")
           for token in ("build.sh", "ditto", "quota.1m.sh", "release_check.py"):

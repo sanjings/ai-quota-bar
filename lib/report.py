@@ -85,10 +85,11 @@ DEFAULT_CONFIG = {
     "thresholds": {"warn": 50.0, "danger": 80.0},
 }
 
+# 预警用正橙，和危险红分开；深色菜单由 Swift adapt() 再提亮。
 COLOR = {
-    "ok": "#185FA5",
-    "warn": "#BA7517",
-    "danger": "#A32D2D",
+    "ok": "#0969DA",
+    "warn": "#FF8800",
+    "danger": "#FF1111",
     "muted": "#888780",
     "title": "#444441",
 }

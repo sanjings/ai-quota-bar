@@ -157,6 +157,8 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
     /// 比当前构建新的正式 Release。没有，或这次没问成，就是 nil。
     private var updateNotice: ReleaseNotice?
     private var isCheckingRelease = false
+    private var isInstallingUpdate = false
+    private var releaseCompletions: [(ReleaseCheckOutcome) -> Void] = []
     private var releaseTimer: Timer?
     /// 配置弹窗里的输入框（「从剪贴板填入」按钮需要引用它）
     private weak var tokenField: NSSecureTextField?
@@ -249,43 +251,176 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
     // MARK: 版本提示（与额度刷新无关）
 
     /// 问 GitHub 有没有更新的正式 Release。不碰 isFetching / payload。
-    private func checkForRelease() {
+    private func checkForRelease(completion: ((ReleaseCheckOutcome) -> Void)? = nil) {
+        if let completion {
+            releaseCompletions.append(completion)
+        }
         guard !isCheckingRelease else { return }
-        guard let current = ReleaseCheck.currentMarketingVersion() else { return }
+        guard let current = ReleaseCheck.currentMarketingVersion() else {
+            finishReleaseCheck(.failed)
+            return
+        }
         isCheckingRelease = true
         let script = scriptPath
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let outcome = ReleaseCheck.run(scriptPath: script, current: current)
             DispatchQueue.main.async {
-                guard let self else { return }
-                self.isCheckingRelease = false
-                switch outcome {
-                case .update(let notice):
-                    self.updateNotice = notice
-                case .upToDate:
-                    self.updateNotice = nil
-                case .failed:
-                    break
-                }
+                self?.finishReleaseCheck(outcome)
             }
         }
     }
 
-    /// 插在下拉菜单顶部。整行可点，打开 Release 页，不安装。
+    private func finishReleaseCheck(_ outcome: ReleaseCheckOutcome) {
+        isCheckingRelease = false
+        switch outcome {
+        case .update(let notice):
+            updateNotice = notice
+        case .upToDate:
+            updateNotice = nil
+        case .failed:
+            break
+        }
+        let waiting = releaseCompletions
+        releaseCompletions = []
+        for completion in waiting {
+            completion(outcome)
+        }
+    }
+
+    private func autoUpdateEnabled() -> Bool {
+        guard let path = ConfigStore.configPath(besideScript: scriptPath),
+              let root = try? ConfigStore.load(from: path)
+        else { return false }
+        return ConfigStore.Form.read(from: root).autoUpdate
+    }
+
+    /// 插在下拉菜单顶部。关闭自动安装时只打开 Release 页。
     private func addReleaseNotice(to menu: NSMenu) {
         guard let notice = updateNotice else { return }
-        let item = NSMenuItem(
-            title: "发现新版本 \(notice.tag) · 打开 Release",
-            action: #selector(openLink(_:)),
-            keyEquivalent: "")
-        item.target = self
-        item.representedObject = notice.url
-        item.isEnabled = true
+        let item: NSMenuItem
+        if isInstallingUpdate {
+            item = NSMenuItem(title: "正在准备更新…", action: nil, keyEquivalent: "")
+            item.isEnabled = false
+        } else if autoUpdateEnabled(), notice.zip != nil, notice.sha256 != nil {
+            item = NSMenuItem(
+                title: "发现新版本 \(notice.tag) · 立即更新",
+                action: #selector(installUpdate),
+                keyEquivalent: "")
+            item.target = self
+            item.isEnabled = true
+        } else {
+            item = NSMenuItem(
+                title: "发现新版本 \(notice.tag) · 打开 Release",
+                action: #selector(openLink(_:)),
+                keyEquivalent: "")
+            item.target = self
+            item.representedObject = notice.url
+            item.isEnabled = true
+        }
         menu.insertItem(item, at: 0)
         // 额度菜单各段前面已经有分隔线，这里不再叠一条。
         if menu.items.count > 1 && !menu.items[1].isSeparatorItem {
             menu.insertItem(.separator(), at: 1)
         }
+    }
+
+    /// 下载并校验。确认之后才退出并替换。不碰 isFetching / payload。
+    @objc private func installUpdate() {
+        guard !isInstallingUpdate else { return }
+        guard let notice = updateNotice, let zip = notice.zip, let sha = notice.sha256 else { return }
+        guard let install = packagedInstallDirectory() else {
+            offerReleasePage(
+                "无法自动安装",
+                "这一份不是 Release 解压目录（AI Quota Bar.app 与 quota.1m.sh 不在同一层）。没有替换任何文件。",
+                url: notice.url)
+            return
+        }
+        isInstallingUpdate = true
+        let script = scriptPath
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let staged = ReleaseCheck.stage(scriptPath: script, zip: zip, sha: sha)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch staged {
+                case .failed(let message):
+                    self.isInstallingUpdate = false
+                    self.showMessage("更新失败", message + "\n额度显示不受影响。", style: .warning)
+                case .ready(let root):
+                    self.confirmInstall(notice, staged: root, install: install)
+                }
+            }
+        }
+    }
+
+    private func confirmInstall(_ notice: ReleaseNotice, staged: URL, install: URL) {
+        let alert = NSAlert()
+        alert.messageText = "安装 \(notice.tag)？"
+        alert.informativeText = "校验已通过。继续会退出当前程序，替换这一份安装目录里的程序文件，然后打开新版本。config.json 和 cache 会保留。"
+        alert.addButton(withTitle: "立即安装")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        guard response == .alertFirstButtonReturn else {
+            isInstallingUpdate = false
+            discardStage(staged)
+            return
+        }
+        guard beginSwap(install: install, staged: staged) else {
+            isInstallingUpdate = false
+            discardStage(staged)
+            showMessage("无法开始安装", "没有退出，也没有改动当前安装。\n额度显示不受影响。", style: .warning)
+            return
+        }
+        NSApp.terminate(nil)
+    }
+
+    /// 等当前进程退出后再替换，避免换到一半。失败时返回 false，调用方不退出。
+    private func beginSwap(install: URL, staged: URL) -> Bool {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: scriptPath)
+        process.arguments = [
+            "--apply-update",
+            install.path,
+            staged.path,
+            "--wait-pid",
+            String(ProcessInfo.processInfo.processIdentifier),
+            "--relaunch",
+        ]
+        process.standardInput = FileHandle.nullDevice
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return false
+        }
+        process.waitUntilExit()
+        return process.terminationStatus == 0
+    }
+
+    private func packagedInstallDirectory() -> URL? {
+        let install = Bundle.main.bundleURL.deletingLastPathComponent()
+        let script = install.appendingPathComponent("quota.1m.sh").path
+        guard FileManager.default.fileExists(atPath: script) else { return nil }
+        return install
+    }
+
+    private func discardStage(_ root: URL) {
+        let parent = root.deletingLastPathComponent()
+        guard parent.lastPathComponent.hasPrefix("quota-staged-") else { return }
+        try? FileManager.default.removeItem(at: parent)
+    }
+
+    private func offerReleasePage(_ title: String, _ body: String, url: URL) {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        alert.informativeText = body
+        alert.addButton(withTitle: "打开 Release")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        NSWorkspace.shared.open(url)
     }
 
     /// 设置不进 Python 菜单：它打开的是本 App 的窗口，和这次取数结果无关。
@@ -309,9 +444,13 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
         }
         // 菜单收起会让这个无 Dock 的 App 失活，同步开窗口会被一起藏起来。
         DispatchQueue.main.async { [weak self] in
-            SettingsWindowController.show(configPath: path) { [weak self] in
+            SettingsWindowController.show(configPath: path, onSaved: { [weak self] in
                 self?.refresh()
-            }
+            }, onCheckUpdate: { [weak self] done in
+                self?.checkForRelease { outcome in
+                    done(Self.releaseStatus(outcome))
+                }
+            })
         }
     }
 
@@ -458,6 +597,17 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
         }
 
         return menu
+    }
+
+    private static func releaseStatus(_ outcome: ReleaseCheckOutcome) -> String {
+        switch outcome {
+        case .update(let notice):
+            return "发现新版本 \(notice.tag)。"
+        case .upToDate:
+            return "已是最新的正式版。"
+        case .failed:
+            return "这次没有检查到。额度显示不受影响。"
+        }
     }
 
     @objc private func openLink(_ sender: NSMenuItem) {

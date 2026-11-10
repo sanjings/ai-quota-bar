@@ -5,25 +5,38 @@ import Cocoa
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let configPath: String
     private let onSaved: () -> Void
+    private let onCheckUpdate: (@escaping (String) -> Void) -> Void
     private var controls: SettingsControls?
     private static var shared: SettingsWindowController?
 
-    static func show(configPath: String, onSaved: @escaping () -> Void) {
+    static func show(
+        configPath: String,
+        onSaved: @escaping () -> Void,
+        onCheckUpdate: @escaping (@escaping (String) -> Void) -> Void
+    ) {
         if let existing = shared, existing.window?.isVisible == true {
             existing.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let controller = SettingsWindowController(configPath: configPath, onSaved: onSaved)
+        let controller = SettingsWindowController(
+            configPath: configPath,
+            onSaved: onSaved,
+            onCheckUpdate: onCheckUpdate)
         shared = controller
         controller.window?.center()
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
-    private init(configPath: String, onSaved: @escaping () -> Void) {
+    private init(
+        configPath: String,
+        onSaved: @escaping () -> Void,
+        onCheckUpdate: @escaping (@escaping (String) -> Void) -> Void
+    ) {
         self.configPath = configPath
         self.onSaved = onSaved
+        self.onCheckUpdate = onCheckUpdate
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 440, height: 360),
             styleMask: [.titled, .closable, .miniaturizable],
@@ -63,7 +76,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         do {
             let root = try ConfigStore.load(from: configPath)
             let form = ConfigStore.Form.read(from: root)
-            let controls = SettingsControls(form: form, target: self, saveAction: #selector(saveClicked))
+            let controls = SettingsControls(
+                form: form,
+                target: self,
+                saveAction: #selector(saveClicked),
+                checkAction: #selector(checkClicked))
             self.controls = controls
             addSection(stack, title: "数据源", rows: [
                 controls.cursor,
@@ -83,6 +100,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             addSection(stack, title: "缓存（秒）", rows: [
                 labeledRow("网络数据源", controls.cacheFetch),
                 labeledRow("本地数据源", controls.cacheLocal),
+            ])
+            addSection(stack, title: "更新", rows: [
+                controls.autoUpdate,
+                wrappingLabel(
+                    "关闭时只在菜单提示，点一下打开 Release 页面，不下载。勾选并保存后，若这个正式版带有 macOS zip，菜单改为「立即更新」：校验通过并经确认后才替换这一份安装目录里的程序文件，然后重新打开。config.json 和 cache 会保留。校验失败不会覆盖现有安装。",
+                    size: 12,
+                    color: .secondaryLabelColor),
+                controls.checkButton,
+                controls.updateStatus,
             ])
             let note = wrappingLabel(
                 "保存写入这份 config.json，下一轮刷新生效。关闭窗口不会保存。",
@@ -144,7 +170,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             cacheFetch: fetch,
             cacheLocal: local,
             warn: warn,
-            danger: danger)
+            danger: danger,
+            autoUpdate: controls.autoUpdate.state == .on)
         do {
             let root = try ConfigStore.load(from: configPath)
             form.write(into: root)
@@ -155,6 +182,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         controls.status.stringValue = "已保存，下一轮刷新生效。"
         onSaved()
+    }
+
+    @objc private func checkClicked() {
+        controls?.updateStatus.stringValue = "正在检查…"
+        onCheckUpdate { [weak self] message in
+            self?.controls?.updateStatus.stringValue = message
+        }
     }
 
     private func requireNumber(_ field: NSTextField, name: String) -> NSNumber? {
@@ -200,10 +234,13 @@ private final class SettingsControls {
     let danger: NSTextField
     let cacheFetch: NSTextField
     let cacheLocal: NSTextField
+    let autoUpdate: NSButton
+    let checkButton: NSButton
+    let updateStatus: NSTextField
     let saveButton: NSButton
     let status: NSTextField
 
-    init(form: ConfigStore.Form, target: AnyObject, saveAction: Selector) {
+    init(form: ConfigStore.Form, target: AnyObject, saveAction: Selector, checkAction: Selector) {
         cursor = checkbox("显示 Cursor", on: form.cursorEnabled)
         codex = checkbox("显示 ChatGPT", on: form.codexEnabled)
         deepseek = checkbox("显示 DeepSeek", on: form.deepseekEnabled)
@@ -215,6 +252,10 @@ private final class SettingsControls {
         danger = editor(ConfigStore.formatNumber(form.danger))
         cacheFetch = editor(ConfigStore.formatNumber(form.cacheFetch))
         cacheLocal = editor(ConfigStore.formatNumber(form.cacheLocal))
+        autoUpdate = checkbox("允许立即安装新版本", on: form.autoUpdate)
+        checkButton = NSButton(title: "检查更新", target: target, action: checkAction)
+        checkButton.bezelStyle = .rounded
+        updateStatus = wrappingLabel("检查更新后会显示结果。", size: 12, color: .secondaryLabelColor)
         saveButton = NSButton(title: "保存", target: target, action: saveAction)
         saveButton.bezelStyle = .rounded
         saveButton.keyEquivalent = "\r"

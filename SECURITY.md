@@ -11,7 +11,7 @@
 2. **不落盘。** token / API Key 只在内存中用于单次请求，不写入 `cache/`、
    不写日志、不写临时文件。
 3. **不打印。** 任何输出（菜单栏文本、JSON、错误信息）都不包含凭证内容。
-4. **无遥测。** 没有统计、没有崩溃上报、没有第三方 SDK。版本检查只读取 GitHub 上公开的 Release，不上传本机信息。
+4. **无遥测。** 没有统计、没有崩溃上报、没有第三方 SDK。版本检查和安装包下载只读取 GitHub 上公开的 Release，不上传本机信息。安装前会用同一次 Release 的 `.sha256` 校验，对不上就不替换本地文件。
 
 ## 数据流向
 
@@ -22,8 +22,9 @@
 | DeepSeek | `https://api.deepseek.com/user/balance` | 你自己配置的 API Key | 每 5 分钟（有缓存） |
 | ChatGPT | **不联网** | — | 每 60 秒读一次本地文件 |
 | 版本检查 | `https://api.github.com/repos/sanjings/ai-quota-bar/releases/latest` | 不带凭证。请求头是 Accept、User-Agent（`AI-Quota-Bar`）和 GitHub API 版本 | 启动时一次，之后每 6 小时。失败则跳过，不弹窗 |
+| 安装更新 | 该 Release 上的 `AI-Quota-Bar-<版本>-macos.zip` 与同名 `.sha256`（只跟随 `github.com` 和 GitHub 的发布文件域名） | 不带凭证。User-Agent 仍是 `AI-Quota-Bar` | 仅在设置里打开「允许立即安装」并点「立即更新」之后。校验失败不写安装目录 |
 
-额度接口之外，只有上面这一次公开的版本查询。没有别的出站请求。
+额度接口之外，出站请求只有上面的公开版本查询，以及你明确开始安装时的那两个文件。没有别的出站请求。
 
 ## 凭证存放位置
 

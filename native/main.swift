@@ -115,9 +115,8 @@ private func adapt(_ color: NSColor) -> NSColor {
 
 // MARK: - 菜单信息行自绘视图
 
-/// 禁用菜单项会把接近 labelColor 的文字色替换成 disabled 灰（四轮实测：
-/// 动态 labelColor / 烘焙色 / 纯白 / 96% 白均被替换），而 attributedTitle
-/// 里的显式颜色则忠实渲染。含默认色的行改用本视图自绘，绕开该规则。
+/// 禁用菜单项会把 attributedTitle 的显式色往白里掺。含默认色的行、以及
+/// 不能点击的着色行改用本视图自绘，绕开这条规则。
 private final class MenuRowView: NSView {
     private let content: NSAttributedString
     /// 与标准菜单项的文字起点一致（像素实测：标准项文字原点比自绘视图
@@ -558,9 +557,15 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
                     .foregroundColor: parseHex(entry.color).map(adapt) ?? defaultColor,
                 ]
                 if let paragraphStyle { attributes[.paragraphStyle] = paragraphStyle }
-                item.attributedTitle = NSAttributedString(
-                    string: entry.title ?? "",
-                    attributes: attributes)
+                let text = NSAttributedString(string: entry.title ?? "", attributes: attributes)
+                let isActionable = entry.href != nil || entry.refresh == true || entry.action != nil
+                // 禁用项会把 attributedTitle 的颜色掺白。不能点的行改自绘。
+                // sub 仍走系统项，MenuRowView 不认 indentationLevel。
+                if isActionable || entry.kind == "sub" {
+                    item.attributedTitle = text
+                } else {
+                    item.view = MenuRowView(content: text)
+                }
             }
 
             if let href = entry.href, let url = URL(string: href) {
@@ -585,9 +590,7 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
                 }
             }
 
-            // 只有带动作的项才可点击：无动作的信息行禁用后不参与 hover
-            // 高亮，与系统菜单"可点项才高亮"的交互一致；文字颜色由
-            // attributedTitle 显式指定，禁用不会变灰
+            // 只有带动作的项才可点击：无动作的信息行禁用后不参与 hover 高亮。
             item.isEnabled = item.action != nil
 
             if entry.kind == "sub" {

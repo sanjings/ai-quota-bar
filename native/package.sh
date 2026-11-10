@@ -63,7 +63,7 @@ APP_OUTPUT="$DEST/$APP_NAME.app" APP_VERSION="$ZIP_VERSION" bash "$NATIVE/build.
 cp "$BASE_DIR/quota.1m.sh" "$DEST/quota.1m.sh"
 cp "$BASE_DIR/lib/report.py" "$DEST/lib/report.py"
 cp "$BASE_DIR/lib/release_check.py" "$DEST/lib/release_check.py"
-cp "$BASE_DIR/config.json" "$DEST/config.json"
+cp "$BASE_DIR/config.example.json" "$DEST/config.json"
 cp "$BASE_DIR/LICENSE" "$DEST/LICENSE"
 cp "$BASE_DIR/SECURITY.md" "$DEST/SECURITY.md"
 chmod +x "$DEST/quota.1m.sh"

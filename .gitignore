@@ -1,3 +1,6 @@
+# 本机设置。模板是 config.example.json，设置面板写 config.json。
+config.json
+
 # 运行时缓存
 cache/
 __pycache__/

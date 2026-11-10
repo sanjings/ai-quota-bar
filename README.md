@@ -143,7 +143,7 @@ Grok Bot 算在 Cursor 这一次取数里：周额度请求失败，或账号没
 
 ## 配置
 
-从菜单栏下拉打开「设置…」，或直接编辑 `config.json`（改完无需重启，下一次刷新自动生效）：
+从菜单栏下拉打开「设置…」，或直接编辑同目录的 `config.json`（改完无需重启，下一次刷新自动生效）。这个文件只在本机，不进仓库；仓库里的 `config.example.json` 是同一份默认值，打安装包时会放成 `config.json`。
 
 | 键 | 默认 | 说明 |
 |---|---|---|
@@ -331,7 +331,8 @@ ChatGPT 部分停在旧值属正常（见上文「ChatGPT 数据的边界」）�
   ├── quota.1m.sh              # 取数入口：定位 python3 并调用 report.py；版本相关参数转给 release_check.py
   ├── lib/report.py            # 取数 + 输出（数据层的全部逻辑）
   ├── lib/release_check.py     # 对比当前版本与 GitHub 最新正式 Release；可下载校验并替换 Release 目录
-  ├── config.json              # 上表的配置项
+  ├── config.example.json      # 配置模板（进仓库）。安装包里会放成 config.json
+  ├── config.json              # 本机配置（git 忽略，设置面板写这里）
   ├── scripts/
   │   └── cursor-token.sh      # 交互式配置 Cursor token 到 Keychain（含验证）
   ├── cache/state.json         # 运行时缓存（失败时降级显示用，git 忽略）

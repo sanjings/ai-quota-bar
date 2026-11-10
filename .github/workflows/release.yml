@@ -58,7 +58,7 @@ jobs:
 
           notes="$(mktemp)"
           cat > "$notes" <<'EOF'
-          预编译的 macOS 菜单栏应用（ad-hoc 签名）。zip 内是 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`、`lib/report.py`、`lib/release_check.py`、`config.json`。请整份解压后打开 .app。
+          预编译的 macOS 菜单栏应用（ad-hoc 签名）。zip 内是 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`、`lib/report.py`、`lib/notify.py`、`lib/release_check.py`、`config.json`。请整份解压后打开 .app。
 
           Gatekeeper 会拦截从浏览器下载的 ad-hoc 应用。解压后在该目录执行 `xattr -dr com.apple.quarantine .`，再打开。细节见仓库 README「从 Release 安装」。
 

@@ -4,6 +4,8 @@
 //       (`quota.1m.sh --json`)。
 // 取数逻辑、阈值规则、降级策略仍集中在 Python 侧，
 // 因此调整这些内容不需要重新编译本程序。
+// 越线后发不发系统通知也由 Python 决定（lib/notify.py）。
+// 这里只负责弹出通知和处理系统权限。通知失败不影响取数。
 //
 // 菜单栏标题使用 QuotaBarView 自绘的两行布局（标签行 + 数值行）。
 //
@@ -88,6 +90,31 @@ private struct Payload: Decodable {
     let stale: Bool
     let columns: [ColumnPayload]
     let menu: [MenuEntry]
+    /// 这一轮已经越过阈值的项。解析失败当成没有，菜单栏照常画。
+    let alerts: [QuotaAlert]
+    /// 设置里的总开关。旧脚本没这个字段时按打开处理。
+    let notificationsEnabled: Bool
+
+    private enum CodingKeys: String, CodingKey {
+        case stale, columns, menu, alerts, notificationsEnabled
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        stale = try container.decode(Bool.self, forKey: .stale)
+        columns = try container.decode([ColumnPayload].self, forKey: .columns)
+        menu = try container.decode([MenuEntry].self, forKey: .menu)
+        if let decoded = try? container.decode([QuotaAlert].self, forKey: .alerts) {
+            alerts = decoded
+        } else {
+            alerts = []
+        }
+        if let enabled = try? container.decode(Bool.self, forKey: .notificationsEnabled) {
+            notificationsEnabled = enabled
+        } else {
+            notificationsEnabled = true
+        }
+    }
 }
 
 // MARK: - 颜色工具
@@ -174,6 +201,7 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
         }
 
         setContent(.placeholder("额度 --"))
+        QuotaNotifier.install()
         refresh()
 
         let timer = Timer(timeInterval: refreshSeconds, repeats: true) { [weak self] _ in
@@ -444,6 +472,7 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
         // 菜单收起会让这个无 Dock 的 App 失活，同步开窗口会被一起藏起来。
         DispatchQueue.main.async { [weak self] in
             SettingsWindowController.show(configPath: path, onSaved: { [weak self] in
+                QuotaNotifier.allowPromptAgain()
                 self?.refresh()
             }, onCheckUpdate: { [weak self] done in
                 self?.checkForRelease { outcome in
@@ -457,6 +486,11 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
 
     private func apply(_ payload: Payload) {
         setContent(.columns(payload.columns.map { QuotaColumn(label: $0.label, value: $0.value) }))
+        // 菜单栏已经画完。后面的通知失败停在 QuotaNotifier 里。
+        QuotaNotifier.deliver(
+            alerts: payload.alerts,
+            enabled: payload.notificationsEnabled,
+            scriptPath: scriptPath)
     }
 
     /// 更新视图内容并同步状态项宽度（自绘视图需要显式给定长度）

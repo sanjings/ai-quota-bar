@@ -83,6 +83,8 @@ DEFAULT_CONFIG = {
         "barWidth": 8,
     },
     "thresholds": {"warn": 50.0, "danger": 80.0},
+    # 缺省打开。设置面板可以关掉。判断仍用上面的 thresholds 和低余额阈值。
+    "notifications": {"enabled": True},
 }
 
 # 预警用正橙，和危险红分开；深色菜单由 Swift adapt() 再提亮。
@@ -599,6 +601,22 @@ def level(pct, warn, danger):
     return "ok"
 
 
+def deepseek_balance_state(deepseek, low_balance):
+    """DeepSeek 要不要标红。通知和菜单栏共用，避免两套比较。
+
+    返回 (low, unavailable)。余额等于阈值算低。
+    total 为空或解析不了时不算低；available 不是 false 时不算不可用。
+    """
+    unavailable = bool(deepseek) and deepseek.get("available") is False
+    low = False
+    if deepseek and deepseek.get("total"):
+        try:
+            low = float(deepseek["total"]) <= float(low_balance)
+        except (TypeError, ValueError):
+            low = False
+    return low, unavailable
+
+
 def bar(pct, width):
     pct = max(0.0, min(100.0, float(pct)))
     filled = int(round(pct / 100.0 * width))
@@ -755,13 +773,8 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
 
     # 余额告警有两个来源：低于阈值（可继续用但该充值），以及官方 is_available
     # 明确为 false（余额已不足以发起请求）。后者比阈值更权威，两者都要显示成异常色。
-    ds_low = False
-    ds_unavailable = bool(deepseek) and deepseek.get("available") is False
+    ds_low, ds_unavailable = deepseek_balance_state(deepseek, low_balance)
     if deepseek and deepseek.get("total"):
-        try:
-            ds_low = float(deepseek["total"]) <= low_balance
-        except (TypeError, ValueError):
-            ds_low = False
         columns.append({
             "label": "DeepSeek",
             "value": "%s%s" % (currency_symbol(deepseek.get("currency")), deepseek["total"]),
@@ -1022,11 +1035,23 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
         ],
     })
 
+    # 通知是附加数据。模块缺失、收集抛错，都退回「没有待发通知」，菜单照常输出。
+    notify_on = True
+    alert_list = []
+    try:
+        import notify
+        notify_on = notify.notifications_enabled(cfg)
+        alert_list = notify.collect_alerts(cfg, cursor, deepseek, codex, level)
+    except Exception:
+        alert_list = []
+
     return {
         "updatedAtEpoch": time.time(),
         "stale": bool(cursor_stale or deepseek_stale or codex_stale),
         "columns": columns,
         "menu": menu,
+        "notificationsEnabled": notify_on,
+        "alerts": alert_list,
     }
 
 

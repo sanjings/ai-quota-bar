@@ -1,10 +1,10 @@
 # AI Quota Bar
 
-macOS 菜单栏常驻小组件，同时显示 **ChatGPT（Codex）订阅额度**、**Cursor 订阅额度双池**、**Grok Bot 独立周额度** 与 **DeepSeek 账户余额**。Grok Bot 和 Cursor 月度双池是两笔额度，共用同一条 Cursor token。账号有这笔周额度时，菜单栏对应列的标签是 **Cursor / Grok Bot**（斜线两侧是普通空格），数值是三格已用百分比；没有时标签仍是 **Cursor**，只有两格百分比。
+macOS 菜单栏常驻小组件，同时显示 **ChatGPT（Codex）订阅额度**、**Claude 订阅额度**、**Cursor 订阅额度双池**、**Grok Bot 独立周额度** 与 **DeepSeek 账户余额**。Grok Bot 和 Cursor 月度双池是两笔额度，共用同一条 Cursor token。账号有这笔周额度时，菜单栏对应列的标签是 **Cursor / Grok Bot**（斜线两侧是普通空格），数值是三格已用百分比；没有时标签仍是 **Cursor**，只有两格百分比。Claude 这一列是 claude.ai 的 5 小时与周额度，已用百分比，和 ChatGPT 同一套读法。
 
 ```
-ChatGPT    Cursor / Grok Bot    DeepSeek    ← 菜单栏常驻，标签+数值两行显示
-4% / 4%    92% / 42% / 8%       ¥2.79
+ChatGPT    Claude       Cursor / Grok Bot    DeepSeek    ← 菜单栏常驻，标签+数值两行显示
+4% / 4%    12% / 35%    92% / 42% / 8%       ¥2.79
 ```
 
 百分比斜线两侧是发丝空格（U+200A）。没有独立 Grok Bot 周额度时，中间列的标签是 `Cursor`，百分比只有 Models 和 Others 两格。
@@ -14,6 +14,7 @@ ChatGPT    Cursor / Grok Bot    DeepSeek    ← 菜单栏常驻，标签+数值�
 | 标签 | 数字 |
 |---|---|
 | ChatGPT | 5 小时额度已用 / 周额度已用 |
+| Claude | 5 小时额度已用 / 周额度已用。只有一格有数据时，菜单栏只显示那一格 |
 | Cursor / Grok Bot | Cursor Models / Others Models / Grok Bot。没有独立的 Grok Bot 额度时，标题退回「Cursor」，数字只有前两个 |
 | DeepSeek | 账户余额（不是百分比） |
 
@@ -23,7 +24,7 @@ Cursor 这一列的颜色看当前显示出来的百分比里较高的那一格�
 
 账号没有这笔独立额度，或这一次没有拿到已用百分比时，这两行不出现，菜单栏标签保持「Cursor」，只显示两格百分比。菜单上写「Grok Bot」，不写协议名 Sand。下拉菜单里 ChatGPT 区块的标题仍是「ChatGPT Plus」。
 
-点击菜单栏项可展开详情：额度进度条、重置倒计时、Grok Bot 的一周额度、DeepSeek 充值/赠送拆分、各服务用量面板直达链接。三个数据源互相独立，只配自己要用的即可。没配 Cursor token、或本机没有 Codex 会话时，对应那一列会显示「不可用」或读取失败，其余照常，这不是安装失败。
+点击菜单栏项可展开详情：额度进度条、重置倒计时、Claude 的模型周额度（接口有才出现）、Grok Bot 的一周额度、DeepSeek 充值/赠送拆分、各服务用量面板直达链接。四个数据源互相独立，只配自己要用的即可。没配 Cursor token、没配 Claude sessionKey，或本机没有 Codex 会话时，对应那一列会显示「不可用」或读取失败，其余照常，这不是安装失败。
 
 ---
 
@@ -45,7 +46,7 @@ zip 里是 ad-hoc 签名的 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`�
 5. **打开 `.app`**。再双击 `AI Quota Bar.app`。系统设置 → 隐私与安全性里的「仍要打开」，以及右键 → 打开，有时也能过；仍提示已损坏时，回到第 4 步。
 6. **开机自启（可选）**。把**这个解压目录里的** `AI Quota Bar.app` 加进登录项，不要加另一份拷贝。macOS 13 及以后：系统设置 → 通用 → 登录项（较新版本里叫「登录项与扩展」）。macOS 12：系统偏好设置 → 用户与群组 → 登录项。
 
-配置改同目录的 `config.json`，改完无需重启，下一轮刷新生效。缓存写在同目录的 `cache/`，第一次取数后出现。Cursor / DeepSeek 的凭证写在本机钥匙串，步骤与源码安装相同，见下文「配置」。没配 Cursor token、或本机没有 Codex 会话时，对应那一列会显示「不可用」或读取失败，其余照常，这不是安装失败。
+配置改同目录的 `config.json`，改完无需重启，下一轮刷新生效。缓存写在同目录的 `cache/`，第一次取数后出现。Cursor / DeepSeek / Claude 的凭证写在本机钥匙串，步骤与源码安装相同，见下文「配置」。没配 Cursor token、没配 Claude sessionKey，或本机没有 Codex 会话时，对应那一列会显示「不可用」或读取失败，其余照常，这不是安装失败。
 
 要求：macOS 12 或更新，以及本机有 `/usr/bin/python3`（安装 Xcode 命令行工具后就有）。`release.yml` 在 `macos-latest` 上打出来的是 **arm64** 可执行文件。Intel Mac 跑不了这个包，请按下面的「快速开始」在本机编译。
 
@@ -78,11 +79,12 @@ open native/"AI Quota Bar.app"
 
 程序从可执行文件向上逐级查找 `quota.1m.sh`。源码树里 `.app` 在 `native/`，脚本在仓库根；Release zip 里脚本与 `.app` 同级。两条都能找到。把 `.app` 单独放到一个没有 `quota.1m.sh` 的目录（例如只把 `.app` 拷进「应用程序」，而不是整份解压目录）时，菜单没有数据。从 Release 安装时，整份目录的放法见上文第 2 步。
 
-然后在菜单栏点开这一项配置。菜单里的入口会先向对应接口校验，通过才写入 Keychain。命令行里 Cursor 同样先校验；下面这条 DeepSeek 的 `security` 命令不校验，粘错了要等下一轮刷新才看得到失败。服务名、校验规则和两种入口的差别见下文「配置」。
+然后在菜单栏点开这一项配置。菜单里的入口会先向对应接口校验，通过才写入 Keychain。命令行里 Cursor 同样先校验；下面这两条 DeepSeek 和 Claude 的 `security` 命令不校验，粘错了要等下一轮刷新才看得到失败。服务名、校验规则和两种入口的差别见下文「配置」。
 
 ```bash
 bash scripts/cursor-token.sh                                         # Cursor，可选
 security add-generic-password -U -s deepseek-api-key -a "$USER" -w   # DeepSeek，可选
+security add-generic-password -U -s claude-session-key -a "$USER" -w # Claude，可选
 ```
 
 > 要求：macOS 12+（`native/Info.plist` 的 `LSMinimumSystemVersion`）。Xcode 命令行工具提供 `swiftc`、`iconutil` 和 `/usr/bin/python3`。取数脚本 `quota.1m.sh` 按这个顺序找解释器：`/usr/bin/python3`、`/opt/homebrew/bin/python3`、`/usr/local/bin/python3`。`scripts/cursor-token.sh` 固定使用 `/usr/bin/python3`。
@@ -95,7 +97,7 @@ security add-generic-password -U -s deepseek-api-key -a "$USER" -w   # DeepSeek�
 > ```
 >
 > 只有向上找 `quota.1m.sh` 失败时才会读 `AI_QUOTA_BAR_HOME`。
-> ChatGPT 额度不用配凭证，读的是本机 Codex CLI 会话；Cursor / DeepSeek 的凭证说明见下文。Grok Bot 不另配凭证，和 Cursor 共用 `cursor-access-token`。
+> ChatGPT 额度不用配凭证，读的是本机 Codex CLI 会话；Cursor / DeepSeek / Claude 的凭证说明见下文。Grok Bot 不另配凭证，和 Cursor 共用 `cursor-access-token`。Claude 用的是 claude.ai 的 `sessionKey`，不是 Claude Code 的 OAuth，也不是 API Key。
 > 凭证只进本机 Keychain，边界见 [SECURITY.md](SECURITY.md)。
 
 **开机自启**：把 `native/AI Quota Bar.app` 这个路径加进登录项。从 Release 安装的，改为解压目录里的那一份（见上文第 6 步），不要加另一份拷贝。macOS 13 及以后：系统设置 → 通用 → 登录项（较新版本里叫「登录项与扩展」）。macOS 12：系统偏好设置 → 用户与群组 → 登录项。
@@ -116,6 +118,7 @@ pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar"
 | Cursor 双池额度 | `api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage` | macOS Keychain，service = `cursor-access-token`（**需手动配置一次**） | 月度 Models / Others。未公开接口，已做容错 |
 | Grok Bot 一周额度 | `api2.cursor.sh/aiserver.v1.DashboardService/GetSandUsageStatus` | 与 Cursor 同一条 Keychain token，不另配 | 旧套餐上的独立一周额度。有已用百分比时，菜单栏在 Models / Others 后再加一格。下拉里放在「重置倒计时」之后，自带「重置时间 · 倒计时」。没有额度或请求失败时省略，不影响 Cursor 双池 |
 | DeepSeek 余额 | `api.deepseek.com/user/balance`（官方公开接口） | macOS Keychain 中的 API Key | |
+| Claude 订阅用量 | `claude.ai/api/organizations`，再 `claude.ai/api/organizations/{uuid}/usage` | macOS Keychain 中的 `sessionKey`（默认 service `claude-session-key`） | 用量页用的未公开接口。已用百分比，不是 API 余额。见下文「配置 Claude 密钥」 |
 
 **关于 Cursor 凭证的边界（重要）**：额度用的 token **不从 Cursor 内部存储读取，也不解密**。
 你自己从客户端取出，存进自己的 Keychain 条目，程序只读这一条。
@@ -136,7 +139,7 @@ Cursor 登录态踢掉。若在 Cursor 里退出登录/重新登录，旧 token 
 会话文件，不是实时接口——不用 Codex 时数据停留在最后一次任务；窗口重置时刻
 过后由本地推断归零显示。需 ChatGPT 订阅登录 + 官方直连（经代理/路由时该字段为空）。
 
-三个数据源**互相独立**：其中一个失效时，其余照常显示，失效的那项会给出文字提示而非中断整个组件。
+四个数据源**互相独立**：其中一个失效时，其余照常显示，失效的那项会给出文字提示而非中断整个组件。
 Grok Bot 算在 Cursor 这一次取数里：周额度请求失败，或账号没有这笔额度时，只是不显示 Grok Bot，Cursor 双池仍用这次结果。
 
 ---
@@ -152,16 +155,18 @@ Grok Bot 算在 Cursor 这一次取数里：周额度请求失败，或账号没
 | `deepseek.enabled` | `true` | 是否显示 DeepSeek 余额 |
 | `deepseek.keychainService` | `deepseek-api-key` | Keychain 条目的服务名 |
 | `deepseek.lowBalanceThreshold` | `20.0` | 余额低于此值时预警（标红并给出充值链接） |
+| `claude.enabled` | `true` | 是否显示 Claude 订阅用量 |
+| `claude.keychainService` | `claude-session-key` | Keychain 条目的服务名 |
 | `display.cacheSeconds.fetch` | `300` | 网络类数据源的缓存秒数 |
 | `display.cacheSeconds.local` | `20` | 本地类数据源（ChatGPT）的缓存秒数 |
 | `display.showBars` | `true` | 下拉菜单中是否显示进度条 |
 | `display.barWidth` | `8` | 进度条格数 |
 | `thresholds.warn` | `50.0` | 用量达到该百分比转为琥珀色，并作为额度通知的预警线 |
 | `thresholds.danger` | `80.0` | 用量达到该百分比转为红色，并作为额度通知的危险线 |
-| `notifications.enabled` | `true` | 为 true 时，ChatGPT 的 5 小时与周额度、Cursor 的合计、两个模型池和 Grok Bot、DeepSeek 余额达到上面的阈值（或官方标记为已无法请求）时，各发一条本机系统通知。同一阈值在同一重置周期只发一次；掉下去又在 30 分钟内回来不重复发。把阈值调低后，下一轮刷新按新阈值再判断。`false` 则不发。通知失败不影响菜单栏取数 |
+| `notifications.enabled` | `true` | 为 true 时，ChatGPT 与 Claude 的 5 小时和周额度、Claude 下拉里的模型周额度和额外用量、Cursor 的合计、两个模型池和 Grok Bot、DeepSeek 余额达到上面的阈值（或官方标记为已无法请求）时，各发一条本机系统通知。同一阈值在同一重置周期只发一次；掉下去又在 30 分钟内回来不重复发。把阈值调低后，下一轮刷新按新阈值再判断。`false` 则不发。通知失败不影响菜单栏取数。Claude 不另设开关或阈值 |
 | `update.auto` | `false` | 为 true 时，菜单里的新版本可以下载、校验，确认后替换当前 Release 目录。默认关闭，只打开 Release 页面 |
 
-**刷新节奏**：App 每 60 秒调用一次取数脚本；网络类（Cursor 双池与 Grok Bot、DeepSeek）由 300 秒
+**刷新节奏**：App 每 60 秒调用一次取数脚本；网络类（Cursor 双池与 Grok Bot、DeepSeek、Claude）由 300 秒
 缓存挡住不重复发请求。Grok Bot 跟 Cursor 双池放在同一次结果里，共用这一档缓存。本地类（ChatGPT）每次重读（成本≈0）。新增数据源只需在
 `lib/report.py` 中决定归 fetch 还是 local 档。
 
@@ -191,6 +196,34 @@ DeepSeek 的 Key **不会过期**，配置一次长期有效。
 
 > 提示：DeepSeek 的余额是**账户级**的，同一账号下任意一个 API Key 查到的余额都相同；
 > 建议新建一个专用 Key（如命名 `menubar-quota`），便于将来单独撤销而不影响其他服务。
+
+### 配置 Claude 密钥
+
+这一列是 **claude.ai 订阅用量**：5 小时窗口和周额度的**已用百分比**。不是 Console 里的 API 预付费余额。Anthropic 没有公开的剩余余额接口；Admin API 的用量和费用报表只给历史消耗，而且个人账号不能用。程序不调用那些接口，也不发会扣费的 Messages 请求。
+
+凭证是浏览器里的 `sessionKey`（以 `sk-ant-sid` 开头），写入 macOS Keychain。它等同 claude.ai 的登录态，不是 `sk-ant-api`，也不是 `sk-ant-admin`。菜单会先向用量接口校验，通过才写入。下面的 `security` 命令不校验。
+
+**① 在菜单栏里配置（推荐）** —— 下拉菜单点「配置 Claude 密钥」，粘贴后保存。
+
+1. 浏览器打开 https://claude.ai/settings/usage 并登录
+2. 开发者工具 → Application → Cookies → `https://claude.ai`
+3. 复制 `sessionKey` 的值。粘贴 `sessionKey=sk-ant-sid...` 整段也可以
+
+保存前会请求 `https://claude.ai/api/organizations`，选用 `capabilities` 含 `chat` 的组织（有订阅标记时优先那个），再请求 `https://claude.ai/api/organizations/{uuid}/usage`。失败只提示原因，不覆盖原来还能用的密钥。Keychain 服务名来自 `claude.keychainService`（默认 `claude-session-key`）。
+
+**② 命令行**（不校验。粘贴 sessionKey 本身，不要带 `sessionKey=` 前缀）：
+
+```bash
+security add-generic-password -U -s claude-session-key -a "$USER" -w
+```
+
+`-s` 必须和 `claude.keychainService` 一致。`-a` 用当前用户名。`-w` 放在最后且不跟密码。粘错了要等下一轮刷新才会看到失败。
+
+未配置时，下拉菜单显示「Claude 不可用 · 未配置密钥」，其余数据源照常。退出 claude.ai 或登录过期（接口 401/403）时，显示「密钥已失效」。组织拒绝查询时显示「没有订阅用量权限」。免费账号常常没有用量数字，会显示「当前账号没有订阅额度数据」，不会显示成 0%。
+
+下拉里有进度条和重置时间。接口若另外给出模型周额度，或已经开启的额外用量百分比，会多出对应的一行。菜单栏优先放 5 小时和周额度（缺一格就只显示有的那格）；两格都没有时，改显示模型周额度或额外用量，最多两格。颜色看菜单栏上这两格里较高的一格，沿用设置里的预警 / 危险阈值。模型周额度和额外用量在下拉里按同一套阈值着色，通知也覆盖它们。不为 Claude 单做开关。直达页面：https://claude.ai/settings/usage
+
+接口未公开。稳定使用的字段是 `five_hour` / `seven_day` 的 `utilization`（0–100，表示已用）和 `resets_at`。这两格缺失时，改读 `limits` 里 `kind` 为 `session` / `weekly_all` 的 `percent`。模型周额度优先用 `limits` 里 `weekly_scoped`（`scope.model.display_name`），否则用旧字段 `seven_day_opus` / `seven_day_sonnet`。实验代号不展示。没有剩余条数，也没有美元余额。程序不读 Claude Code 的凭据文件或钥匙串，也不刷新它的登录态。有多个带 `chat` 的组织时，用第一个 `billing_type` 含 `subscription` 的。成功结果与其它网络源一样缓存 300 秒；这一列失败不会清掉其它列。
 
 ### 配置 Cursor token
 
@@ -295,6 +328,18 @@ ChatGPT 订阅账号登录并直连官方（走本地代理/路由时额度字�
 
 按上文「配置 DeepSeek 密钥」写入即可。
 
+**显示 `Claude 不可用 · 未配置密钥`**
+
+按上文「配置 Claude 密钥」写入 `sessionKey`。`sk-ant-api` 和 `sk-ant-admin` 不能用在这一列。
+
+**显示 `Claude 不可用 · 密钥已失效`**
+
+登录已过期，或已经退出 claude.ai。重新从 Cookie 里复制 `sessionKey`。保存前会先验证，通过后覆盖原来那条。
+
+**显示 `Claude 不可用 · 当前账号没有订阅额度数据`**
+
+请求成功了，但 5 小时、周额度和模型周额度都是空的。免费账号常见。这不是 0%。
+
 **显示 `DeepSeek 不可用 · 密钥已失效`**
 
 说明接口返回了 401：key 被删除/重建，或账号状态异常。重新执行配置命令即可。
@@ -394,6 +439,7 @@ pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar"
 rm -rf <项目目录>
 security delete-generic-password -s cursor-access-token   # 若配置过 Cursor token
 security delete-generic-password -s deepseek-api-key      # 若配置过 DeepSeek 密钥；改过 keychainService 时换成那个名字
+security delete-generic-password -s claude-session-key    # 若配置过 Claude sessionKey；改过 keychainService 时换成那个名字
 # 并从登录项中移除 AI Quota Bar（路径见上文「开机自启」）
 ```
 
@@ -447,4 +493,5 @@ gh release upload v0.2.0 dist/AI-Quota-Bar-0.2.0-macos.zip dist/AI-Quota-Bar-0.2
 
 Cursor 的额度接口（月度双池，以及 Grok Bot 周额度 `GetSandUsageStatus`）为**未公开的逆向接口**，可能随上游版本变更而失效；
 ChatGPT 的额度数据依赖 Codex CLI 的本地会话记录格式，同样可能随版本变更；
+Claude 的订阅用量来自 claude.ai 用量页的未公开接口（`/api/organizations/{uuid}/usage`），同样可能变更。它不是 Admin API，也不是预付费余额；
 DeepSeek 余额接口为官方公开接口。程序已对字段做容错处理，取不到时降级显示而非崩溃。

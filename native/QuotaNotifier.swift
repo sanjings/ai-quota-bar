@@ -141,7 +141,7 @@ enum QuotaNotifier {
             }
             let proceed = confirm(
                 "允许额度预警通知",
-                "用量达到设置里的预警或危险阈值，或者 DeepSeek 余额低于阈值时，会发一条系统通知。用的就是设置面板里的那些数字。同一阈值在同一次重置周期里只提醒一次。\n\n点「继续」后，系统会询问是否允许「AI Quota Bar」发送通知。",
+                "ChatGPT、Claude、Cursor 的用量达到设置里的预警或危险阈值，或者 DeepSeek 余额低于阈值时，会发一条系统通知。用的就是设置面板里的那些数字。同一阈值在同一次重置周期里只提醒一次。\n\n点「继续」后，系统会询问是否允许「AI Quota Bar」发送通知。",
                 confirmTitle: "继续",
                 cancelTitle: "以后再说")
             if !proceed {

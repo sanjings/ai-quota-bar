@@ -86,7 +86,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 controls.cursor,
                 controls.codex,
                 controls.deepseek,
+                controls.claude,
                 labeledRow("DeepSeek 钥匙串服务名", controls.service),
+                labeledRow("Claude 钥匙串服务名", controls.claudeService),
                 labeledRow("低余额阈值", controls.lowBalance),
             ])
             addSection(stack, title: "显示", rows: [
@@ -100,7 +102,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             addSection(stack, title: "通知", rows: [
                 controls.notifications,
                 wrappingLabel(
-                    "沿用上面的「预警」「危险」和 DeepSeek「低余额阈值」，不另设数字。ChatGPT 的 5 小时与周额度、Cursor 的合计、两个模型池和 Grok Bot、DeepSeek 余额，达到预警或危险（余额低于阈值，或官方标记为已无法请求）时各发一条系统通知。同一阈值在同一次重置周期里只发一次；用量掉下去又在 30 分钟内回来，不重复提醒。把阈值调低并保存后，下一轮刷新会按新阈值再发。关掉开关就不再发。通知失败时菜单栏照常更新。",
+                    "沿用上面的「预警」「危险」和 DeepSeek「低余额阈值」，不另设数字。ChatGPT 与 Claude 的 5 小时和周额度、Claude 下拉里的模型周额度和额外用量、Cursor 的合计、两个模型池和 Grok Bot、DeepSeek 余额，达到预警或危险（余额低于阈值，或官方标记为已无法请求）时各发一条系统通知。同一阈值在同一次重置周期里只发一次；用量掉下去又在 30 分钟内回来，不重复提醒。把阈值调低并保存后，下一轮刷新会按新阈值再发。关掉开关就不再发。通知失败时菜单栏照常更新。",
                     size: 12,
                     color: .secondaryLabelColor),
             ])
@@ -153,7 +155,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     @objc private func saveClicked() {
         guard let controls else { return }
         let service = controls.service.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !service.isEmpty else {
+        let claudeService = controls.claudeService.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !service.isEmpty, !claudeService.isEmpty else {
             showAlert("钥匙串服务名不能为空。")
             return
         }
@@ -170,7 +173,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             cursorEnabled: controls.cursor.state == .on,
             codexEnabled: controls.codex.state == .on,
             deepseekEnabled: controls.deepseek.state == .on,
+            claudeEnabled: controls.claude.state == .on,
             keychainService: service,
+            claudeKeychainService: claudeService,
             lowBalanceThreshold: low,
             showBars: controls.showBars.state == .on,
             barWidth: width,
@@ -234,7 +239,9 @@ private final class SettingsControls {
     let cursor: NSButton
     let codex: NSButton
     let deepseek: NSButton
+    let claude: NSButton
     let service: NSTextField
+    let claudeService: NSTextField
     let lowBalance: NSTextField
     let showBars: NSButton
     let barWidth: NSTextField
@@ -253,7 +260,9 @@ private final class SettingsControls {
         cursor = checkbox("显示 Cursor", on: form.cursorEnabled)
         codex = checkbox("显示 ChatGPT", on: form.codexEnabled)
         deepseek = checkbox("显示 DeepSeek", on: form.deepseekEnabled)
+        claude = checkbox("显示 Claude", on: form.claudeEnabled)
         service = editor(form.keychainService)
+        claudeService = editor(form.claudeKeychainService)
         lowBalance = editor(ConfigStore.formatNumber(form.lowBalanceThreshold))
         showBars = checkbox("显示进度条", on: form.showBars)
         barWidth = editor(ConfigStore.formatNumber(form.barWidth))

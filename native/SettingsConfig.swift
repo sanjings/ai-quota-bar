@@ -110,7 +110,9 @@ enum ConfigStore {
         var cursorEnabled: Bool
         var codexEnabled: Bool
         var deepseekEnabled: Bool
+        var claudeEnabled: Bool
         var keychainService: String
+        var claudeKeychainService: String
         var lowBalanceThreshold: NSNumber
         var showBars: Bool
         var barWidth: NSNumber
@@ -127,6 +129,7 @@ enum ConfigStore {
             let cursor = root["cursor"] as? NSDictionary
             let codex = root["codex"] as? NSDictionary
             let deepseek = root["deepseek"] as? NSDictionary
+            let claude = root["claude"] as? NSDictionary
             let display = root["display"] as? NSDictionary
             let cache = display?["cacheSeconds"] as? NSDictionary
             let thresholds = root["thresholds"] as? NSDictionary
@@ -136,7 +139,9 @@ enum ConfigStore {
                 cursorEnabled: readBool(cursor?["enabled"], default: true),
                 codexEnabled: readBool(codex?["enabled"], default: true),
                 deepseekEnabled: readBool(deepseek?["enabled"], default: true),
+                claudeEnabled: readBool(claude?["enabled"], default: true),
                 keychainService: (deepseek?["keychainService"] as? String) ?? "deepseek-api-key",
+                claudeKeychainService: (claude?["keychainService"] as? String) ?? "claude-session-key",
                 lowBalanceThreshold: readNumber(deepseek?["lowBalanceThreshold"], default: 20),
                 showBars: readBool(display?["showBars"], default: true),
                 barWidth: readNumber(display?["barWidth"], default: 8),
@@ -157,6 +162,9 @@ enum ConfigStore {
             deepseek["enabled"] = deepseekEnabled
             deepseek["keychainService"] = keychainService
             deepseek["lowBalanceThreshold"] = lowBalanceThreshold
+            let claude = ConfigStore.child("claude", in: root)
+            claude["enabled"] = claudeEnabled
+            claude["keychainService"] = claudeKeychainService
             let display = ConfigStore.child("display", in: root)
             display["showBars"] = showBars
             display["barWidth"] = barWidth

@@ -60,7 +60,7 @@ extension ConfigStore {
         let defaults = Form.read(from: empty)
         if !defaults.showBars || defaults.barWidth.intValue != 8
             || defaults.keychainService != "deepseek-api-key" || !defaults.codexEnabled
-            || defaults.autoUpdate {
+            || defaults.autoUpdate || !defaults.notificationsEnabled {
             throw SettingsConfigTestFailure(description: "缺省配置不正确")
         }
 
@@ -120,6 +120,7 @@ extension ConfigStore {
         form.warn = try mustParse(formatNumber(form.warn))
         form.danger = try mustParse(formatNumber(form.danger))
         form.autoUpdate = true
+        form.notificationsEnabled = false
         form.write(into: loaded)
         try save(loaded, to: configURL.path)
 
@@ -170,6 +171,7 @@ extension ConfigStore {
         assert cfg["thresholds"]["danger"] == 80
         assert cfg["future"]["on"] is True
         assert cfg["update"]["auto"] is True
+        assert cfg["notifications"]["enabled"] is False
         """
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/python3")

@@ -97,6 +97,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
                 labeledRow("预警", controls.warn),
                 labeledRow("危险", controls.danger),
             ])
+            addSection(stack, title: "通知", rows: [
+                controls.notifications,
+                wrappingLabel(
+                    "沿用上面的「预警」「危险」和 DeepSeek「低余额阈值」，不另设数字。ChatGPT 的 5 小时与周额度、Cursor 的合计、两个模型池和 Grok Bot、DeepSeek 余额，达到预警或危险（余额低于阈值，或官方标记为已无法请求）时各发一条系统通知。同一阈值在同一次重置周期里只发一次；用量掉下去又在 30 分钟内回来，不重复提醒。把阈值调低并保存后，下一轮刷新会按新阈值再发。关掉开关就不再发。通知失败时菜单栏照常更新。",
+                    size: 12,
+                    color: .secondaryLabelColor),
+            ])
             addSection(stack, title: "缓存（秒）", rows: [
                 labeledRow("网络数据源", controls.cacheFetch),
                 labeledRow("本地数据源", controls.cacheLocal),
@@ -171,7 +178,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             cacheLocal: local,
             warn: warn,
             danger: danger,
-            autoUpdate: controls.autoUpdate.state == .on)
+            autoUpdate: controls.autoUpdate.state == .on,
+            notificationsEnabled: controls.notifications.state == .on)
         do {
             let root = try ConfigStore.load(from: configPath)
             form.write(into: root)
@@ -235,6 +243,7 @@ private final class SettingsControls {
     let cacheFetch: NSTextField
     let cacheLocal: NSTextField
     let autoUpdate: NSButton
+    let notifications: NSButton
     let checkButton: NSButton
     let updateStatus: NSTextField
     let saveButton: NSButton
@@ -253,6 +262,7 @@ private final class SettingsControls {
         cacheFetch = editor(ConfigStore.formatNumber(form.cacheFetch))
         cacheLocal = editor(ConfigStore.formatNumber(form.cacheLocal))
         autoUpdate = checkbox("允许立即安装新版本", on: form.autoUpdate)
+        notifications = checkbox("超过阈值时发出系统通知", on: form.notificationsEnabled)
         checkButton = NSButton(title: "检查更新", target: target, action: checkAction)
         checkButton.bezelStyle = .rounded
         updateStatus = wrappingLabel("检查更新后会显示结果。", size: 12, color: .secondaryLabelColor)

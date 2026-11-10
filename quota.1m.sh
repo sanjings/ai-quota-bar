@@ -3,6 +3,7 @@
 #
 # 找到可用的 python3，再把参数透传给 lib/report.py。
 # --check-release / --stage-release / --apply-update 例外：转给 lib/release_check.py。
+# --plan-notifications 例外：转给 lib/notify.py，只决定这一轮发哪些额度通知。
 # 问失败或还不能安装时它打印一行 JSON，不走额度输出。
 # 之所以需要这一层而非直接调用 python3：GUI 程序由 launchd 之类的方式拉起时
 # PATH 与终端不同，不能依赖 `env python3`，必须显式探测解释器位置。
@@ -55,6 +56,16 @@ case "${1:-}" in
     if [ "$1" = "--apply-update" ]; then
         exit 1
     fi
+    exit 0
+    ;;
+    --plan-notifications)
+    # 额度和菜单已经由另一次 --json 画完。这里失败只表示这一轮不发通知。
+    if [ -z "$PYTHON" ]; then
+        printf '%s\n' '{"ok": false, "deliver": [], "ledger": {"sent": {}}}'
+        exit 0
+    fi
+    exec "$PYTHON" "$BASE_DIR/lib/notify.py" --plan-notifications
+    printf '%s\n' '{"ok": false, "deliver": [], "ledger": {"sent": {}}}'
     exit 0
     ;;
 esac

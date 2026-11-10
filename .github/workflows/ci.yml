@@ -55,6 +55,7 @@ jobs:
                   print(f"py_compile ok: {path.relative_to(root)}")
           PY
           python3 lib/release_check.py --self-test
+          python3 lib/notify.py --self-test
 
       - name: Shell syntax check
         run: |
@@ -98,7 +99,9 @@ jobs:
               Path("native/SettingsConfig.swift"),
               Path("native/SettingsConfigSelfTest.swift"),
               Path("native/SettingsWindow.swift"),
+              Path("native/QuotaNotifier.swift"),
               Path("native/make_icon.swift"),
+              Path("lib/notify.py"),
               Path("native/build.sh"),
               Path("native/package.sh"),
               Path("native/Info.plist"),
@@ -111,14 +114,16 @@ jobs:
           build = Path("native/build.sh").read_text(encoding="utf-8")
           if "swiftc" not in build:
               sys.exit("native/build.sh does not invoke swiftc")
-          for name in ("UpdateCheck.swift", "SettingsConfig.swift", "SettingsWindow.swift"):
+          for name in ("UpdateCheck.swift", "SettingsConfig.swift", "SettingsWindow.swift", "QuotaNotifier.swift"):
               if name not in build:
                   sys.exit(f"native/build.sh does not compile {name}")
+          if "UserNotifications" not in build:
+              sys.exit("native/build.sh does not link UserNotifications")
           if "SettingsConfigSelfTest.swift" in build:
               sys.exit("native/build.sh must not compile SettingsConfigSelfTest.swift")
 
           package = Path("native/package.sh").read_text(encoding="utf-8")
-          for token in ("build.sh", "ditto", "quota.1m.sh", "release_check.py"):
+          for token in ("build.sh", "ditto", "quota.1m.sh", "release_check.py", "notify.py"):
               if token not in package:
                   sys.exit(f"native/package.sh missing {token}")
 

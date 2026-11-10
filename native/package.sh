@@ -62,6 +62,7 @@ APP_OUTPUT="$DEST/$APP_NAME.app" APP_VERSION="$ZIP_VERSION" bash "$NATIVE/build.
 
 cp "$BASE_DIR/quota.1m.sh" "$DEST/quota.1m.sh"
 cp "$BASE_DIR/lib/report.py" "$DEST/lib/report.py"
+cp "$BASE_DIR/lib/notify.py" "$DEST/lib/notify.py"
 cp "$BASE_DIR/lib/release_check.py" "$DEST/lib/release_check.py"
 cp "$BASE_DIR/config.example.json" "$DEST/config.json"
 cp "$BASE_DIR/LICENSE" "$DEST/LICENSE"
@@ -72,7 +73,7 @@ cat > "$DEST/INSTALL.txt" <<EOF
 AI Quota Bar ${ZIP_VERSION}（macOS）
 
 这个目录要整份保留。.app 只负责菜单栏显示，额度数据来自同目录的
-quota.1m.sh 和 lib/report.py，版本检查和安装包校验来自 lib/release_check.py，
+quota.1m.sh、lib/report.py 和 lib/notify.py，版本检查和安装包校验来自 lib/release_check.py，
 配置在同目录的 config.json。
 整份文件夹可以放到任意位置，包括「应用程序」下面的子文件夹。
 不要只把 AI Quota Bar.app 拖进「应用程序」：单独拷走会找不到脚本，菜单没有数据。

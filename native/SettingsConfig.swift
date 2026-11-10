@@ -120,6 +120,8 @@ enum ConfigStore {
         var danger: NSNumber
         /// 关闭时只提示并打开 Release 页。打开后菜单可以下载并安装。
         var autoUpdate: Bool
+        /// 关掉后不发系统通知。阈值仍用 thresholds 和 lowBalanceThreshold。
+        var notificationsEnabled: Bool
 
         static func read(from root: NSDictionary) -> Form {
             let cursor = root["cursor"] as? NSDictionary
@@ -129,6 +131,7 @@ enum ConfigStore {
             let cache = display?["cacheSeconds"] as? NSDictionary
             let thresholds = root["thresholds"] as? NSDictionary
             let update = root["update"] as? NSDictionary
+            let notifications = root["notifications"] as? NSDictionary
             return Form(
                 cursorEnabled: readBool(cursor?["enabled"], default: true),
                 codexEnabled: readBool(codex?["enabled"], default: true),
@@ -141,7 +144,8 @@ enum ConfigStore {
                 cacheLocal: readNumber(cache?["local"], default: 20),
                 warn: readNumber(thresholds?["warn"], default: 50),
                 danger: readNumber(thresholds?["danger"], default: 80),
-                autoUpdate: readBool(update?["auto"], default: false))
+                autoUpdate: readBool(update?["auto"], default: false),
+                notificationsEnabled: readBool(notifications?["enabled"], default: true))
         }
 
         func write(into root: NSMutableDictionary) {
@@ -164,6 +168,8 @@ enum ConfigStore {
             thresholds["danger"] = danger
             let update = ConfigStore.child("update", in: root)
             update["auto"] = autoUpdate
+            let notifications = ConfigStore.child("notifications", in: root)
+            notifications["enabled"] = notificationsEnabled
         }
     }
 

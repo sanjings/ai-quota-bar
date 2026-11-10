@@ -31,10 +31,10 @@ Cursor 这一列的颜色看当前显示出来的百分比里较高的那一格�
 
 可下载的预编译包：[v0.2.0-rc.1](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.2.0-rc.1)。[v0.1.0](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.1.0) 只有源码包。正式版 `v0.2.0` 的打法见下文「发布」。
 
-zip 里是 ad-hoc 签名的 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`、`lib/report.py`、`lib/release_check.py`、`config.json`，还有 `INSTALL.txt`。菜单栏程序只负责显示，取数仍由这些脚本完成。`lib/release_check.py` 用来询问有没有新版本；设置里打开「允许立即安装」后，也用它下载并校验安装包。按下面的顺序安装即可；zip 里的 `INSTALL.txt` 是同一套说明的短版。
+zip 里是 ad-hoc 签名的 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`、`lib/report.py`、`lib/notify.py`、`lib/release_check.py`、`config.json`，还有 `INSTALL.txt`。菜单栏程序负责显示和系统通知，取数仍由这些脚本完成。`lib/notify.py` 决定这一轮要不要发额度预警。`lib/release_check.py` 用来询问有没有新版本；设置里打开「允许立即安装」后，也用它下载并校验安装包。按下面的顺序安装即可；zip 里的 `INSTALL.txt` 是同一套说明的短版。
 
 1. **下载 zip**。在上面的 Release 页面下载 `AI-Quota-Bar-<版本>-macos.zip`。同页的 `.sha256` 是 `shasum -a 256` 的结果，用来核对文件，可以不做。
-2. **解压，整份目录留在一起**。解压后得到一个文件夹，例如 `AI-Quota-Bar-0.2.0-rc.1-macos/`。这个文件夹可以整体放到任意位置，包括「应用程序」下面的子文件夹。**不要只把 `AI Quota Bar.app` 拖进「应用程序」**。`.app` 必须和同层的 `quota.1m.sh`、`lib/report.py`、`lib/release_check.py`、`config.json` 留在同一目录；只拷走 `.app` 时，菜单没有数据。删掉 `lib/release_check.py` 时额度仍在，只是不再提示新版本。
+2. **解压，整份目录留在一起**。解压后得到一个文件夹，例如 `AI-Quota-Bar-0.2.0-rc.1-macos/`。这个文件夹可以整体放到任意位置，包括「应用程序」下面的子文件夹。**不要只把 `AI Quota Bar.app` 拖进「应用程序」**。`.app` 必须和同层的 `quota.1m.sh`、`lib/report.py`、`lib/notify.py`、`lib/release_check.py`、`config.json` 留在同一目录；只拷走 `.app` 时，菜单没有数据。删掉 `lib/notify.py` 时额度仍在，只是不再发越线通知。删掉 `lib/release_check.py` 时额度仍在，只是不再提示新版本。
 3. **先看 `INSTALL.txt`**。解压目录里的这份短说明覆盖同一套打开方式：Gatekeeper、配置文件、开机自启加哪一份。
 4. **去掉隔离属性**。这个包是 `codesign --sign -` 的 ad-hoc 签名，没有 Apple Developer ID，也没有公证。从浏览器下载后 Gatekeeper 会拦截，常见提示是「无法验证开发者」或「已损坏」。在解压目录打开「终端」，执行：
 
@@ -156,8 +156,9 @@ Grok Bot 算在 Cursor 这一次取数里：周额度请求失败，或账号没
 | `display.cacheSeconds.local` | `20` | 本地类数据源（ChatGPT）的缓存秒数 |
 | `display.showBars` | `true` | 下拉菜单中是否显示进度条 |
 | `display.barWidth` | `8` | 进度条格数 |
-| `thresholds.warn` | `50.0` | 用量达到该百分比转为琥珀色 |
-| `thresholds.danger` | `80.0` | 用量达到该百分比转为红色 |
+| `thresholds.warn` | `50.0` | 用量达到该百分比转为琥珀色，并作为额度通知的预警线 |
+| `thresholds.danger` | `80.0` | 用量达到该百分比转为红色，并作为额度通知的危险线 |
+| `notifications.enabled` | `true` | 为 true 时，ChatGPT 的 5 小时与周额度、Cursor 的合计、两个模型池和 Grok Bot、DeepSeek 余额达到上面的阈值（或官方标记为已无法请求）时，各发一条本机系统通知。同一阈值在同一重置周期只发一次；掉下去又在 30 分钟内回来不重复发。把阈值调低后，下一轮刷新按新阈值再判断。`false` 则不发。通知失败不影响菜单栏取数 |
 | `update.auto` | `false` | 为 true 时，菜单里的新版本可以下载、校验，确认后替换当前 Release 目录。默认关闭，只打开 Release 页面 |
 
 **刷新节奏**：App 每 60 秒调用一次取数脚本；网络类（Cursor 双池与 Grok Bot、DeepSeek）由 300 秒
@@ -322,22 +323,29 @@ ChatGPT 订阅账号登录并直连官方（走本地代理/路由时额度字�
 「数据为缓存值（刷新失败）」。检查网络或对应服务的可用性。
 ChatGPT 部分停在旧值属正常（见上文「ChatGPT 数据的边界」）。
 
+**没有弹出额度通知**
+
+先看设置里「超过阈值时发出系统通知」是否开着，以及用量是否到了预警、危险或低余额。第一次会先说明用途，再出现系统的通知权限对话框；若当时选了不允许，到「系统设置 → 通知 → AI Quota Bar」打开。同一阈值在同一次重置周期里只发一次。把阈值调低并保存后，下一轮刷新会再发。通知发不出去时，菜单栏数字仍会更新。
+
 ---
 
 ## 目录结构
 
 ```
   ai-quota-bar/
-  ├── quota.1m.sh              # 取数入口：定位 python3 并调用 report.py；版本相关参数转给 release_check.py
-  ├── lib/report.py            # 取数 + 输出（数据层的全部逻辑）
+  ├── quota.1m.sh              # 取数入口：定位 python3 并调用 report.py；版本参数转给 release_check.py；通知计划转给 notify.py
+  ├── lib/report.py            # 取数 + 输出（数据层的全部逻辑，含阈值判定）
+  ├── lib/notify.py            # 额度预警：哪些该提醒、同一周期是否已经发过
   ├── lib/release_check.py     # 对比当前版本与 GitHub 最新正式 Release；可下载校验并替换 Release 目录
   ├── config.example.json      # 配置模板（进仓库）。安装包里会放成 config.json
   ├── config.json              # 本机配置（git 忽略，设置面板写这里）
   ├── scripts/
   │   └── cursor-token.sh      # 交互式配置 Cursor token 到 Keychain（含验证）
   ├── cache/state.json         # 运行时缓存（失败时降级显示用，git 忽略）
+  ├── cache/notify-ledger.json # 已发过的额度通知（git 忽略，不含凭证）
   ├── native/                  # 原生 App
   │   ├── main.swift           #   程序主体（脚本定位、定时刷新、菜单构建）
+  │   ├── QuotaNotifier.swift  #   系统通知和权限引导
   │   ├── UpdateCheck.swift    #   后台询问最新正式 Release；「立即更新」时下载并校验
   │   ├── QuotaBarView.swift   #   菜单栏自绘视图（外观参数在此）
   │   ├── make_icon.swift      #   App 图标生成器（代码绘制，可复现）
@@ -351,9 +359,9 @@ ChatGPT 部分停在旧值属正常（见上文「ChatGPT 数据的边界」）�
   └── README.md                # 本文件
   ```
 
-**取数与显示是分离的**：`lib/report.py` 负责取数和阈值判定，原生 App 只负责把结果画出来。
-因此调整阈值、容错策略等只改 Python 即可（改完下一次刷新生效，无需重新编译）；
-只有改动外观才需要重新编译 Swift。
+**取数与显示是分离的**：`lib/report.py` 负责取数和阈值判定，`lib/notify.py` 负责这一轮要不要提醒，原生 App 负责画菜单和弹出系统通知。
+因此调整阈值、去重或通知文案只改 Python 即可（改完下一次刷新生效，无需重新编译）；
+改外观或通知权限引导才需要重新编译 Swift。
 
 ---
 
@@ -366,6 +374,10 @@ bash native/build.sh
 ```
 
 **修改取数逻辑 / 阈值行为** → 改 `lib/report.py` 或 `config.json`，无需编译。
+
+**修改通知去重或文案** → 改 `lib/notify.py`，无需编译。
+
+**修改通知权限引导** → 改 `native/QuotaNotifier.swift`，然后 `bash native/build.sh`。
 
 **重新生成图标** → 改 `native/make_icon.swift`（配色/进度参数在文件末尾），然后在仓库根目录执行与「快速开始」相同的三步。`build.sh` 不会调用 `iconutil`，只拷贝已经生成的 `native/AppIcon.icns`：
 

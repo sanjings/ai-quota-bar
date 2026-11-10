@@ -21,5 +21,8 @@
   "thresholds": {
     "warn": 50.0,
     "danger": 80.0
+  },
+  "notifications": {
+    "enabled": true
   }
 }

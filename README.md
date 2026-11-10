@@ -31,7 +31,7 @@ Cursor 这一列的颜色看当前显示出来的百分比里较高的那一格�
 
 可下载的预编译包：[v0.2.0-rc.1](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.2.0-rc.1)。[v0.1.0](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.1.0) 只有源码包。正式版 `v0.2.0` 的打法见下文「发布」。
 
-zip 里是 ad-hoc 签名的 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`、`lib/report.py`、`lib/release_check.py`、`config.json`，还有 `INSTALL.txt`。菜单栏程序只负责显示，取数仍由这些脚本完成。`lib/release_check.py` 只用来询问有没有新版本。按下面的顺序安装即可；zip 里的 `INSTALL.txt` 是同一套说明的短版。
+zip 里是 ad-hoc 签名的 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`、`lib/report.py`、`lib/release_check.py`、`config.json`，还有 `INSTALL.txt`。菜单栏程序只负责显示，取数仍由这些脚本完成。`lib/release_check.py` 用来询问有没有新版本；设置里打开「允许立即安装」后，也用它下载并校验安装包。按下面的顺序安装即可；zip 里的 `INSTALL.txt` 是同一套说明的短版。
 
 1. **下载 zip**。在上面的 Release 页面下载 `AI-Quota-Bar-<版本>-macos.zip`。同页的 `.sha256` 是 `shasum -a 256` 的结果，用来核对文件，可以不做。
 2. **解压，整份目录留在一起**。解压后得到一个文件夹，例如 `AI-Quota-Bar-0.2.0-rc.1-macos/`。这个文件夹可以整体放到任意位置，包括「应用程序」下面的子文件夹。**不要只把 `AI Quota Bar.app` 拖进「应用程序」**。`.app` 必须和同层的 `quota.1m.sh`、`lib/report.py`、`lib/release_check.py`、`config.json` 留在同一目录；只拷走 `.app` 时，菜单没有数据。删掉 `lib/release_check.py` 时额度仍在，只是不再提示新版本。
@@ -49,9 +49,11 @@ zip 里是 ad-hoc 签名的 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`�
 
 要求：macOS 12 或更新，以及本机有 `/usr/bin/python3`（安装 Xcode 命令行工具后就有）。`release.yml` 在 `macos-latest` 上打出来的是 **arm64** 可执行文件。Intel Mac 跑不了这个包，请按下面的「快速开始」在本机编译。
 
-启动之后，菜单栏程序会在后台询问 GitHub 有没有比当前构建更新的正式 Release（预发布和草稿不算）。启动时问一次，之后每 6 小时再问一次。有的话，下拉菜单顶部多一行「发现新版本 … · 打开 Release」，点一下用浏览器打开该 Release 页面。程序不下载、也不替换正在运行的 `.app`。离线、被限流或返回异常时不显示这一行，额度刷新照常进行。
+启动之后，菜单栏程序会在后台询问 GitHub 有没有比当前构建更新的正式 Release（预发布和草稿不算）。启动时问一次，之后每 6 小时再问一次。有的话，下拉菜单顶部多一行「发现新版本 … · 打开 Release」，点一下用浏览器打开该 Release 页面。这是默认行为：不下载，也不替换正在运行的 `.app`。离线、被限流或返回异常时不显示这一行，额度刷新照常进行。
 
-要装新版本，重新下载 zip，先退出旧进程，再打开新目录里的 `.app`：
+设置里勾选「允许立即安装新版本」并保存后，这一行改为「发现新版本 … · 立即更新」。点下去会下载该 Release 的 zip，用同页的 `.sha256` 校验。校验通过后还要再确认一次，才会退出、替换**这一份解压目录**里的程序文件并重新打开。`config.json` 和 `cache/` 会保留。网络失败、校验和不匹配或解压失败时会提示原因，不会覆盖现有安装，额度刷新也不停。源码目录里的 `.app`（和 `quota.1m.sh` 不在同一层）不会自动替换。
+
+不想用自动安装时，仍可以自己下载 zip，先退出旧进程，再打开新目录里的 `.app`：
 
 ```bash
 pkill -f "AI Quota Bar.app/Contents/MacOS/ai-quota-bar"
@@ -156,6 +158,7 @@ Grok Bot 算在 Cursor 这一次取数里：周额度请求失败，或账号没
 | `display.barWidth` | `8` | 进度条格数 |
 | `thresholds.warn` | `50.0` | 用量达到该百分比转为琥珀色 |
 | `thresholds.danger` | `80.0` | 用量达到该百分比转为红色 |
+| `update.auto` | `false` | 为 true 时，菜单里的新版本可以下载、校验，确认后替换当前 Release 目录。默认关闭，只打开 Release 页面 |
 
 **刷新节奏**：App 每 60 秒调用一次取数脚本；网络类（Cursor 双池与 Grok Bot、DeepSeek）由 300 秒
 缓存挡住不重复发请求。Grok Bot 跟 Cursor 双池放在同一次结果里，共用这一档缓存。本地类（ChatGPT）每次重读（成本≈0）。新增数据源只需在
@@ -307,6 +310,12 @@ ChatGPT 订阅账号登录并直连官方（走本地代理/路由时额度字�
 
 点这一行会用浏览器打开对应的 GitHub Release，不会自动下载或安装。安装仍按上面的「从 Release 安装」重新解压一份。这一行不出现，表示已经是最新的正式版，或这次没有问到 GitHub。问不到时额度显示不受影响。
 
+若设置里已打开「允许立即安装新版本」，这一行会写成「立即更新」。校验失败时会说明原因，当前目录保持原样。
+
+**菜单里出现「发现新版本 … · 立即更新」**
+
+设置里的开关是开的，并且这个正式版带有 macOS zip。点下去会先下载并校验，通过后询问是否退出并安装。取消则不替换文件。
+
 **数据看起来是旧的**
 
 上游接口请求失败时，程序会降级显示上一次成功的数据（缓存），并在下拉菜单顶部提示
@@ -319,16 +328,16 @@ ChatGPT 部分停在旧值属正常（见上文「ChatGPT 数据的边界」）�
 
 ```
   ai-quota-bar/
-  ├── quota.1m.sh              # 取数入口：定位 python3 并调用 report.py；--check-release 转给 release_check.py
+  ├── quota.1m.sh              # 取数入口：定位 python3 并调用 report.py；版本相关参数转给 release_check.py
   ├── lib/report.py            # 取数 + 输出（数据层的全部逻辑）
-  ├── lib/release_check.py     # 对比当前版本与 GitHub 最新正式 Release
+  ├── lib/release_check.py     # 对比当前版本与 GitHub 最新正式 Release；可下载校验并替换 Release 目录
   ├── config.json              # 上表的配置项
   ├── scripts/
   │   └── cursor-token.sh      # 交互式配置 Cursor token 到 Keychain（含验证）
   ├── cache/state.json         # 运行时缓存（失败时降级显示用，git 忽略）
   ├── native/                  # 原生 App
   │   ├── main.swift           #   程序主体（脚本定位、定时刷新、菜单构建）
-  │   ├── UpdateCheck.swift    #   后台询问最新正式 Release；失败不影响额度
+  │   ├── UpdateCheck.swift    #   后台询问最新正式 Release；「立即更新」时下载并校验
   │   ├── QuotaBarView.swift   #   菜单栏自绘视图（外观参数在此）
   │   ├── make_icon.swift      #   App 图标生成器（代码绘制，可复现）
   │   ├── AppIcon.iconset/     #   图标中间产物（git 忽略，make_icon 生成）
@@ -417,7 +426,7 @@ git push origin v0.2.0
 gh release upload v0.2.0 dist/AI-Quota-Bar-0.2.0-macos.zip dist/AI-Quota-Bar-0.2.0-macos.zip.sha256 --clobber
 ```
 
-这条流水线只上传 zip。应用里的版本提示会打开 Release 页面，不会静默安装。
+这条流水线只上传 zip。应用默认只打开 Release 页面；「允许立即安装」打开并且你确认之后，才会替换当前解压目录。
 
 ---
 

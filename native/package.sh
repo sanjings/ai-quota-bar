@@ -14,7 +14,8 @@
 #   dist/AI-Quota-Bar-<版本>-macos.zip.sha256
 #
 # .app 写到临时目录，不覆盖 native/AI Quota Bar.app（那个路径可能正挂在菜单栏上）。
-# 签名是 ad-hoc。应用只会提示新的正式 Release 并打开页面，不会自行替换 .app。
+# 签名是 ad-hoc。默认只提示新的正式 Release。设置里打开「允许立即安装」后，
+# 确认过才会用同页的 .sha256 校验并替换这一份目录。
 # Gatekeeper 说明见 zip 里的 INSTALL.txt 和 README。
 
 set -euo pipefail
@@ -71,7 +72,7 @@ cat > "$DEST/INSTALL.txt" <<EOF
 AI Quota Bar ${ZIP_VERSION}（macOS）
 
 这个目录要整份保留。.app 只负责菜单栏显示，额度数据来自同目录的
-quota.1m.sh 和 lib/report.py，版本提示来自 lib/release_check.py，
+quota.1m.sh 和 lib/report.py，版本检查和安装包校验来自 lib/release_check.py，
 配置在同目录的 config.json。
 整份文件夹可以放到任意位置，包括「应用程序」下面的子文件夹。
 不要只把 AI Quota Bar.app 拖进「应用程序」：单独拷走会找不到脚本，菜单没有数据。
@@ -105,11 +106,13 @@ Gatekeeper：
   macOS 12：系统偏好设置 → 用户与群组 → 登录项。
 
 更新：
-  程序不会自动下载或替换 .app。有更新的正式 Release 时，下拉菜单顶部多一行
-  「发现新版本 … · 打开 Release」，点一下用浏览器打开该页面。问不到时不提示，
-  额度显示不受影响。安装仍是下载新的 zip，先退出旧进程，再打开新目录里的 .app：
-
-    pkill -f 'AI Quota Bar.app/Contents/MacOS/ai-quota-bar'
+  默认不下载。有更新的正式 Release 时，下拉菜单顶部多一行
+  「发现新版本 … · 打开 Release」，点一下用浏览器打开该页面。
+  设置里勾选「允许立即安装新版本」并保存后，这一行改为「立即更新」：
+  先下载 zip，用同页的 .sha256 校验，你确认后才替换本目录里的程序文件并重新打开。
+  config.json 和 cache/ 会保留。校验失败不会覆盖本目录。
+  预发布和草稿不处理。问不到时不提示，额度显示不受影响。
+  这一份如果不是解压出来的目录（.app 与 quota.1m.sh 不在同一层），不会自动替换。
 EOF
 
 OUT_DIR="$BASE_DIR/dist"

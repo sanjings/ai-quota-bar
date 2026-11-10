@@ -118,6 +118,8 @@ enum ConfigStore {
         var cacheLocal: NSNumber
         var warn: NSNumber
         var danger: NSNumber
+        /// 关闭时只提示并打开 Release 页。打开后菜单可以下载并安装。
+        var autoUpdate: Bool
 
         static func read(from root: NSDictionary) -> Form {
             let cursor = root["cursor"] as? NSDictionary
@@ -126,6 +128,7 @@ enum ConfigStore {
             let display = root["display"] as? NSDictionary
             let cache = display?["cacheSeconds"] as? NSDictionary
             let thresholds = root["thresholds"] as? NSDictionary
+            let update = root["update"] as? NSDictionary
             return Form(
                 cursorEnabled: readBool(cursor?["enabled"], default: true),
                 codexEnabled: readBool(codex?["enabled"], default: true),
@@ -137,7 +140,8 @@ enum ConfigStore {
                 cacheFetch: readNumber(cache?["fetch"], default: 300),
                 cacheLocal: readNumber(cache?["local"], default: 20),
                 warn: readNumber(thresholds?["warn"], default: 50),
-                danger: readNumber(thresholds?["danger"], default: 80))
+                danger: readNumber(thresholds?["danger"], default: 80),
+                autoUpdate: readBool(update?["auto"], default: false))
         }
 
         func write(into root: NSMutableDictionary) {
@@ -158,6 +162,8 @@ enum ConfigStore {
             let thresholds = ConfigStore.child("thresholds", in: root)
             thresholds["warn"] = warn
             thresholds["danger"] = danger
+            let update = ConfigStore.child("update", in: root)
+            update["auto"] = autoUpdate
         }
     }
 

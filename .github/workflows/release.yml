@@ -1,7 +1,7 @@
 name: Release
 
 # 版本 tag（v*）推送到 GitHub 时，在 macOS 上打出与 native/package.sh 相同的 zip，
-# 并挂到同名 Release。应用只提示新版本并打开页面，这里不做静默安装。
+# 并挂到同名 Release。应用默认只提示新版本；自动替换在设置里另开，且要用户确认。
 # 日常 push / PR 仍走 ci.yml（ubuntu，不编译 Swift）。
 
 on:
@@ -64,7 +64,7 @@ jobs:
 
           校验：Release 里的 `.zip.sha256` 是 `shasum -a 256` 的结果。
 
-          应用会在菜单里提示更新的正式 Release，点一下打开 Release 页面。不会自动下载或安装。
+          应用会在菜单里提示更新的正式 Release。默认点一下打开 Release 页面，不下载。设置里打开「允许立即安装新版本」后，可以校验 zip 并在确认后替换当前解压目录。
           EOF
 
           args=(release create "$TAG" "${files[@]}" --title "$TAG" --notes-file "$notes" --target "$GITHUB_SHA")

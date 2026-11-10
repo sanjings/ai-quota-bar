@@ -88,7 +88,7 @@ DEFAULT_CONFIG = {
 # 预警用正橙，和危险红分开；深色菜单由 Swift adapt() 再提亮。
 COLOR = {
     "ok": "#0969DA",
-    "warn": "#FF8800",
+    "warn": "#FFA500",
     "danger": "#FF1111",
     "muted": "#888780",
     "title": "#444441",

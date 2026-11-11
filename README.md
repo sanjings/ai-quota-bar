@@ -30,12 +30,12 @@ Cursor 这一列的颜色看当前显示出来的百分比里较高的那一格�
 
 ## 从 Release 安装
 
-可下载的预编译包：[v0.2.0-rc.1](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.2.0-rc.1)。[v0.1.0](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.1.0) 只有源码包。正式版 `v0.2.0` 的打法见下文「发布」。
+可下载的预编译包见 [最新 Release](https://github.com/sanjings/ai-quota-bar/releases/latest)。`v0.2.1` 是第一个带设置面板、完整自动更新、额度通知和 Claude 的预编译包。[v0.1.0](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.1.0) 只有源码包，[v0.2.0-rc.1](https://github.com/sanjings/ai-quota-bar/releases/tag/v0.2.0-rc.1) 是预发布，都不是当前下载入口。正式版 `v0.2.0` 已经发布。
 
 zip 里是 ad-hoc 签名的 `AI Quota Bar.app`，以及同层的 `quota.1m.sh`、`lib/report.py`、`lib/notify.py`、`lib/release_check.py`、`config.json`，还有 `INSTALL.txt`。菜单栏程序负责显示和系统通知，取数仍由这些脚本完成。`lib/notify.py` 决定这一轮要不要发额度预警。`lib/release_check.py` 用来询问有没有新版本；设置里打开「允许立即安装」后，也用它下载并校验安装包。按下面的顺序安装即可；zip 里的 `INSTALL.txt` 是同一套说明的短版。
 
 1. **下载 zip**。在上面的 Release 页面下载 `AI-Quota-Bar-<版本>-macos.zip`。同页的 `.sha256` 是 `shasum -a 256` 的结果，用来核对文件，可以不做。
-2. **解压，整份目录留在一起**。解压后得到一个文件夹，例如 `AI-Quota-Bar-0.2.0-rc.1-macos/`。这个文件夹可以整体放到任意位置，包括「应用程序」下面的子文件夹。**不要只把 `AI Quota Bar.app` 拖进「应用程序」**。`.app` 必须和同层的 `quota.1m.sh`、`lib/report.py`、`lib/notify.py`、`lib/release_check.py`、`config.json` 留在同一目录；只拷走 `.app` 时，菜单没有数据。删掉 `lib/notify.py` 时额度仍在，只是不再发越线通知。删掉 `lib/release_check.py` 时额度仍在，只是不再提示新版本。
+2. **解压，整份目录留在一起**。解压后得到一个文件夹，例如 `AI-Quota-Bar-0.2.1-macos/`。这个文件夹可以整体放到任意位置，包括「应用程序」下面的子文件夹。**不要只把 `AI Quota Bar.app` 拖进「应用程序」**。`.app` 必须和同层的 `quota.1m.sh`、`lib/report.py`、`lib/notify.py`、`lib/release_check.py`、`config.json` 留在同一目录；只拷走 `.app` 时，菜单没有数据。删掉 `lib/notify.py` 时额度仍在，只是不再发越线通知。删掉 `lib/release_check.py` 时额度仍在，只是不再提示新版本。
 3. **先看 `INSTALL.txt`**。解压目录里的这份短说明覆盖同一套打开方式：Gatekeeper、配置文件、开机自启加哪一份。
 4. **去掉隔离属性**。这个包是 `codesign --sign -` 的 ad-hoc 签名，没有 Apple Developer ID，也没有公证。从浏览器下载后 Gatekeeper 会拦截，常见提示是「无法验证开发者」或「已损坏」。在解压目录打开「终端」，执行：
 
@@ -457,24 +457,24 @@ security delete-generic-password -s claude-session-key    # 若配置过 Claude 
 
 ## 发布
 
-维护者在合并后的 `main` 上推送版本 tag 后，`release.yml` 会构建 zip。tag 形如 `v0.2.0`。带连字符的 tag（如 `v0.2.0-rc.1`）会标成预发布。Release 已经存在（含草稿）时，工作流只上传产物。
+维护者在合并后的 `main` 上推送版本 tag 后，`release.yml` 会构建 zip。tag 形如 `v0.2.1`。带连字符的 tag（如 `v0.2.0-rc.1`）会标成预发布。Release 已经存在（含草稿）时，工作流只上传产物。
 
 本地打出同一个 zip：
 
 ```bash
-APP_VERSION=0.2.0 bash native/package.sh
-# 产物：dist/AI-Quota-Bar-0.2.0-macos.zip 与同名的 .sha256
+APP_VERSION=0.2.1 bash native/package.sh
+# 产物：dist/AI-Quota-Bar-0.2.1-macos.zip 与同名的 .sha256
 ```
 
 `package.sh` 把 `.app` 写到临时目录，不覆盖 `native/AI Quota Bar.app`。日常改完 Swift 仍用 `bash native/build.sh`。
 
-正式版 `v0.2.0` 从进入 `main` 的这次改动再打。预发布 `v0.2.0-rc.1` 用来先挂上可下载的 zip，正式 tag 留给 `main`：
+打新的正式版时，在合并后的 `main` 上打 tag。例如 `v0.2.1`：
 
 ```bash
 git checkout main
 git pull origin main
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.2.1
+git push origin v0.2.1
 ```
 
 `release.yml` 由这次 tag 推送启动。
@@ -482,7 +482,7 @@ git push origin v0.2.0
 已有同名 Release 时，也可以在本地打包后补传：
 
 ```bash
-gh release upload v0.2.0 dist/AI-Quota-Bar-0.2.0-macos.zip dist/AI-Quota-Bar-0.2.0-macos.zip.sha256 --clobber
+gh release upload v0.2.1 dist/AI-Quota-Bar-0.2.1-macos.zip dist/AI-Quota-Bar-0.2.1-macos.zip.sha256 --clobber
 ```
 
 这条流水线只上传 zip。应用默认只打开 Release 页面；「允许立即安装」打开并且你确认之后，才会替换当前解压目录。

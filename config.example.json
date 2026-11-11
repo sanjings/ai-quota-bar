@@ -5,6 +5,10 @@
   "codex": {
     "enabled": true
   },
+  "claude": {
+    "enabled": true,
+    "keychainService": "claude-session-key"
+  },
   "deepseek": {
     "enabled": true,
     "keychainService": "deepseek-api-key",

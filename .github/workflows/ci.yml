@@ -55,6 +55,7 @@ jobs:
                   print(f"py_compile ok: {path.relative_to(root)}")
           PY
           python3 lib/release_check.py --self-test
+          python3 lib/report.py --self-test
           python3 lib/notify.py --self-test
 
       - name: Shell syntax check

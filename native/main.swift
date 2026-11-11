@@ -43,7 +43,7 @@ private func locateScriptPath() -> String {
 }
 private let scriptPath = locateScriptPath()
 // App 统一 60s 调一次脚本；真正按 provider 分频在 Python 侧完成：
-// 网络类（Cursor/DeepSeek）靠 300s 缓存挡住不重复发请求，
+// 网络类（Cursor/DeepSeek/Claude）靠 300s 缓存挡住不重复发请求，
 // 本地类（ChatGPT 扫 Codex 会话文件）20s TTL 必然过期、每次重读，成本≈0。
 private let refreshSeconds: TimeInterval = 60
 // 登录项会挂一整天。版本检查和 60 秒的额度刷新不是一条路径。
@@ -72,8 +72,8 @@ private struct MenuEntry: Decodable {
     /// 应用内动作名（如 configure-cursor-token）。由 buildMenu 映射到选择器，
     /// 与 href（打开链接）/ refresh（重取数据）并列，见下。
     let action: String?
-    /// 动作的附加参数：目前用于 DeepSeek 的 Keychain 服务名
-    /// （对应 config.json 的 deepseek.keychainService，改配置无需重编译）
+    /// 动作的附加参数：DeepSeek / Claude 的 Keychain 服务名
+    /// （对应 config.json 里各自的 keychainService，改配置无需重编译）
     let service: String?
     let refresh: Bool?
     /// tab 停靠位（pt）：title 里的 \t 会吸附到这些位置，用于菜单多列对齐。
@@ -619,6 +619,11 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
                     if let service = entry.service {
                         item.representedObject = service
                     }
+                case "configure-claude-key":
+                    item.action = #selector(configureClaudeKey(_:))
+                    if let service = entry.service {
+                        item.representedObject = service
+                    }
                 default:
                     break
                 }
@@ -658,7 +663,7 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
     private struct VerifyResult: Decodable {
         let ok: Bool
         let error: String?
-        /// 成功摘要由 Python 侧拼好：两个数据源的字段不同（百分比 vs 余额），
+        /// 成功摘要由 Python 侧拼好：各数据源的字段不同（百分比 vs 余额），
         /// 格式化集中在一处，Swift 只负责显示
         let summary: String?
     }
@@ -669,7 +674,7 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
         case failed(String)
     }
 
-    /// 一种可配置凭证的静态描述：两个数据源只差文案、Keychain 服务名与校验参数
+    /// 一种可配置凭证的静态描述：各数据源只差文案、Keychain 服务名与校验参数
     private struct CredentialSpec {
         let title: String
         let hint: String
@@ -713,6 +718,23 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
         verifyFlag: "--verify-deepseek-key",
         noun: "密钥")
 
+    private static let claudeSpec = CredentialSpec(
+        title: "配置 Claude 密钥",
+        hint: """
+        这是 claude.ai 的 sessionKey，不是 API Key，也不是 sk-ant-admin。
+
+        ① 浏览器打开 https://claude.ai/settings/usage 并登录
+        ② 开发者工具 → Application → Cookies → https://claude.ai
+        ③ 复制 sessionKey 的值（以 sk-ant-sid 开头）。粘贴 sessionKey=... 整段也可以
+
+        它等同网页登录态，只写本机 Keychain。退出 claude.ai 或过期后需重新配置。
+        这里显示的是订阅已用百分比，不是 Console 里的预付费余额。
+        """,
+        placeholder: "sk-ant-sid...",
+        service: "claude-session-key",
+        verifyFlag: "--verify-claude-key",
+        noun: "密钥")
+
     @objc private func configureCursorToken() {
         configureCredential(Self.cursorSpec, service: Self.cursorSpec.service)
     }
@@ -722,6 +744,12 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
     @objc private func configureDeepSeekKey(_ sender: NSMenuItem) {
         let service = (sender.representedObject as? String) ?? Self.deepseekSpec.service
         configureCredential(Self.deepseekSpec, service: service)
+    }
+
+    /// Claude 的服务名以菜单项带来的为准（对应 config.json 的 claude.keychainService）
+    @objc private func configureClaudeKey(_ sender: NSMenuItem) {
+        let service = (sender.representedObject as? String) ?? Self.claudeSpec.service
+        configureCredential(Self.claudeSpec, service: service)
     }
 
     /// 弹窗粘贴 → 校验 → 写 Keychain → 刷新菜单。
@@ -803,6 +831,20 @@ final class QuotaBarApp: NSObject, NSApplicationDelegate {
 
     private static func normalizeToken(_ raw: String) -> String {
         var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Claude 的 Cookie 头里有空格。先抽出 sessionKey，避免只剩单词 Cookie。
+        if let range = text.range(of: "sessionkey=", options: [.caseInsensitive]) {
+            text = String(text[range.upperBound...])
+            if let semi = text.firstIndex(of: ";") {
+                text = String(text[..<semi])
+            }
+            text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.count >= 2, let first = text.first, first == text.last,
+               first == "\"" || first == "'" {
+                text = String(text.dropFirst().dropLast())
+            }
+            return text.trimmingCharacters(in: .whitespacesAndNewlines)
+                .components(separatedBy: .whitespacesAndNewlines).first ?? ""
+        }
         if let range = text.range(of: "bearer ", options: [.caseInsensitive, .backwards]) {
             text = String(text[range.upperBound...])
         }

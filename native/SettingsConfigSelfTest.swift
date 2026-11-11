@@ -60,6 +60,7 @@ extension ConfigStore {
         let defaults = Form.read(from: empty)
         if !defaults.showBars || defaults.barWidth.intValue != 8
             || defaults.keychainService != "deepseek-api-key" || !defaults.codexEnabled
+            || !defaults.claudeEnabled || defaults.claudeKeychainService != "claude-session-key"
             || defaults.autoUpdate || !defaults.notificationsEnabled {
             throw SettingsConfigTestFailure(description: "缺省配置不正确")
         }
@@ -92,6 +93,11 @@ extension ConfigStore {
         {
           "cursor": {"enabled": true, "note": "keep"},
           "codex": {"enabled": false},
+          "claude": {
+            "enabled": true,
+            "keychainService": "claude-session-key",
+            "note": "keep-claude"
+          },
           "deepseek": {
             "enabled": true,
             "keychainService": "deepseek-api-key",
@@ -109,7 +115,7 @@ extension ConfigStore {
         try original.write(to: configURL, atomically: true, encoding: .utf8)
         let loaded = try load(from: configURL.path)
         var form = Form.read(from: loaded)
-        guard form.showBars, !form.codexEnabled else {
+        guard form.showBars, !form.codexEnabled, form.claudeEnabled else {
             throw SettingsConfigTestFailure(description: "没有读到原配置")
         }
         form.showBars = false
@@ -121,6 +127,7 @@ extension ConfigStore {
         form.danger = try mustParse(formatNumber(form.danger))
         form.autoUpdate = true
         form.notificationsEnabled = false
+        form.claudeEnabled = false
         form.write(into: loaded)
         try save(loaded, to: configURL.path)
 
@@ -165,6 +172,9 @@ extension ConfigStore {
         assert cfg["cursor"]["enabled"] is True
         assert cfg["cursor"]["note"] == "keep"
         assert cfg["codex"]["enabled"] is False
+        assert cfg["claude"]["enabled"] is False
+        assert cfg["claude"]["keychainService"] == "claude-session-key"
+        assert cfg["claude"]["note"] == "keep-claude"
         assert cfg["deepseek"]["keychainService"] == "deepseek-api-key"
         assert cfg["deepseek"]["lowBalanceThreshold"] == 20
         assert cfg["thresholds"]["warn"] == 50

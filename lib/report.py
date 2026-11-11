@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Cursor / DeepSeek 额度采集与输出。
+"""Cursor / DeepSeek / Claude 额度采集与输出。
 
 由 quota.1m.sh 调用，向 stdout 输出结构化 JSON（供原生菜单栏 App 消费）。
 
@@ -9,8 +9,10 @@
 1. 取数（fetch_*）与输出（build_payload）分离，阈值与容错规则集中在取数侧。
 2. Cursor 令牌只读用户自己写入的 Keychain 条目（cursor-access-token），
    不读取、不解密 Cursor 的内部存储，也不主动刷新 token。
-3. 接口全部为逆向/无文档接口，字段做容错，取不到时降级显示而不是崩溃。
+3. 接口字段做容错，取不到时降级显示而不是崩溃。
 4. 全部使用标准库，不依赖任何第三方包。
+5. Claude 只读用户自己粘贴进 Keychain 的 claude.ai sessionKey。
+   不读 Claude Code 的凭据文件或钥匙串，也不刷新登录态。
 """
 
 import base64
@@ -60,6 +62,15 @@ PLAN_NAMES = {
 }
 DEEPSEEK_BALANCE_URL = "https://api.deepseek.com/user/balance"
 
+# Claude 订阅用量：claude.ai 用量页背后的接口，不是已公开的 Admin API。
+# Admin 的 usage/cost 只给历史消耗，且没有剩余余额；这里要的是 5 小时 / 周已用百分比。
+# 凭证是用户从浏览器复制的 sessionKey，不是 sk-ant-api / sk-ant-admin。
+CLAUDE_ORGS_URL = "https://claude.ai/api/organizations"
+CLAUDE_USAGE_URL = "https://claude.ai/api/organizations/%s/usage"
+CLAUDE_USAGE_PAGE = "https://claude.ai/settings/usage"
+CLAUDE_KEYCHAIN_SERVICE = "claude-session-key"
+CLAUDE_SESSION_PREFIX = "sk-ant-sid"
+
 # Codex CLI 会话记录目录：订阅额度数据（rate_limits）写在 rollout jsonl 里，
 # 每个 turn 结束刷新一次。纯本地文件解析，无网络请求。
 CODEX_SESSIONS_DIR = os.path.join(HOME, ".codex", "sessions")
@@ -73,8 +84,12 @@ DEFAULT_CONFIG = {
         "lowBalanceThreshold": 20.0,
     },
     "codex": {"enabled": True},
+    "claude": {
+        "enabled": True,
+        "keychainService": CLAUDE_KEYCHAIN_SERVICE,
+    },
     "display": {
-        # 缓存 TTL 按获取方式分两档：fetch=走网络的 provider（Cursor/DeepSeek），
+        # 缓存 TTL 按获取方式分两档：fetch=走网络的 provider（Cursor/DeepSeek/Claude），
         # local=纯本地读取的 provider（ChatGPT，扫 Codex 会话文件，成本≈0）。
         # App 每 60s 调用一次：local 档必然过期 → 重读；fetch 档命中 → 不发请求。
         # 新增 provider 只需决定归哪档，App 侧无需感知。
@@ -388,7 +403,8 @@ def current_cred_id(reader):
         return None
 
 
-def read_deepseek_key(service):
+def read_keychain_secret(service):
+    """读取用户自己写入的 Keychain 通用密码。未配置和空值都按凭证错误处理。"""
     try:
         result = subprocess.run(
             ["security", "find-generic-password", "-s", service, "-w"],
@@ -402,6 +418,10 @@ def read_deepseek_key(service):
     if not key:
         raise CredentialError("密钥为空")
     return key
+
+
+def read_deepseek_key(service):
+    return read_keychain_secret(service)
 
 
 def verify_cursor_token(raw):
@@ -501,6 +521,347 @@ def fetch_deepseek(service):
         "toppedUp": info.get("topped_up_balance") or "",
         "credId": cred_id(key),
     }
+
+
+# --------------------------------------------------------------------------
+# Claude（claude.ai 订阅用量）
+# --------------------------------------------------------------------------
+
+_CLAUDE_SESSION_CHARS = set(
+    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+
+
+def normalize_claude_session(raw):
+    """取出 sessionKey 本身。兼容带引号、Cookie 头、sessionKey= 前缀和后面的其它 cookie。"""
+    text = (raw or "").strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
+        text = text[1:-1].strip()
+    lower = text.lower()
+    if lower.startswith("cookie:"):
+        text = text.split(":", 1)[1].strip()
+        lower = text.lower()
+    marker = lower.rfind("sessionkey=")
+    if marker >= 0:
+        text = text[marker + len("sessionkey="):]
+    if ";" in text:
+        text = text.split(";", 1)[0]
+    text = text.strip().strip('"').strip("'").strip()
+    parts = text.split()
+    return parts[0] if parts else ""
+
+
+def claude_session_format_error(secret):
+    if not secret:
+        return "没有读到内容，请粘贴 sessionKey"
+    if not secret.startswith(CLAUDE_SESSION_PREFIX):
+        return "sessionKey 应以 sk-ant-sid 开头"
+    if any(ch not in _CLAUDE_SESSION_CHARS for ch in secret):
+        return "sessionKey 应以 sk-ant-sid 开头"
+    return None
+
+
+def read_claude_key(service):
+    secret = normalize_claude_session(read_keychain_secret(service))
+    error = claude_session_format_error(secret)
+    if error:
+        if error.startswith("没有读到"):
+            raise CredentialError("密钥为空")
+        raise CredentialError(error)
+    return secret
+
+
+def claude_org_uuid(value):
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text or len(text) > 80:
+        return None
+    for ch in text:
+        if ch not in "0123456789abcdefABCDEF-":
+            return None
+    return text
+
+
+def iter_claude_orgs(payload):
+    if isinstance(payload, list):
+        items = payload
+    elif isinstance(payload, dict):
+        items = None
+        for key in ("organizations", "data"):
+            if isinstance(payload.get(key), list):
+                items = payload[key]
+                break
+        if items is None:
+            return []
+    else:
+        return []
+    return [item for item in items if isinstance(item, dict)]
+
+
+def select_claude_org(orgs):
+    """挑订阅聊天组织。API 控制台组织没有 chat，打 /usage 会被拒绝。"""
+    chat = []
+    for org in orgs or []:
+        if not isinstance(org, dict):
+            continue
+        uuid = claude_org_uuid(org.get("uuid") or org.get("id"))
+        caps = org.get("capabilities") or []
+        if not uuid or not isinstance(caps, list) or "chat" not in caps:
+            continue
+        chat.append((org, uuid))
+    if not chat:
+        return None
+    for org, uuid in chat:
+        if "subscription" in str(org.get("billing_type") or ""):
+            return uuid
+    return chat[0][1]
+
+
+def _window_from_pct(pct, resets_at):
+    try:
+        number = float(pct)
+    except (TypeError, ValueError):
+        return None
+    if number != number or number < 0 or number in (float("inf"), float("-inf")):
+        return None
+    return {"pct": number, "resetsAt": parse_time(resets_at)}
+
+
+def claude_bucket(value):
+    """已用百分比。utilization 和 limits[].percent 是同一单位（0–100），缺失不当成 0。"""
+    if not isinstance(value, dict):
+        return None
+    raw = value.get("utilization")
+    if raw is None:
+        raw = value.get("percent")
+    resets = value.get("resets_at")
+    if resets is None:
+        resets = value.get("resetsAt")
+    return _window_from_pct(raw, resets)
+
+
+def _clean_label(text, fallback):
+    raw = " ".join(str(text or "").replace("\t", " ").split())
+    if not raw:
+        return fallback
+    if len(raw) > 32:
+        return raw[:31] + "…"
+    return raw
+
+
+def _model_alert_key(label):
+    digest = hashlib.sha256(label.encode("utf-8")).hexdigest()[:12]
+    slug = "".join(ch.lower() if ch.isascii() and ch.isalnum() else "-" for ch in label)
+    slug = "-".join(part for part in slug.split("-") if part)[:24]
+    if slug:
+        return "claude.model.%s.%s" % (slug, digest)
+    return "claude.model.%s" % digest
+
+
+def parse_claude_usage(data):
+    """把用量页 JSON 收成 session / week / models / extra。没有百分比则抛错，不写成 0%。"""
+    if not isinstance(data, dict):
+        raise RuntimeError("当前账号没有订阅额度数据")
+    session = claude_bucket(data.get("five_hour"))
+    week = claude_bucket(data.get("seven_day"))
+    scoped = []
+    limits = data.get("limits") if isinstance(data.get("limits"), list) else []
+    for entry in limits:
+        if not isinstance(entry, dict):
+            continue
+        window = claude_bucket(entry)
+        if window is None:
+            continue
+        kind = entry.get("kind") or entry.get("type")
+        if kind in ("session", "five_hour") and session is None:
+            session = window
+        elif kind in ("weekly_all", "seven_day", "weekly") and week is None:
+            week = window
+        elif kind == "weekly_scoped":
+            scope = entry.get("scope") if isinstance(entry.get("scope"), dict) else {}
+            model = scope.get("model") if isinstance(scope.get("model"), dict) else {}
+            name = model.get("display_name") or model.get("name") or entry.get("display_name")
+            label = _clean_label(name, "模型")
+            scoped.append({
+                "label": label,
+                "pct": window["pct"],
+                "resetsAt": window["resetsAt"],
+                "key": _model_alert_key(label),
+            })
+    if scoped:
+        models = scoped
+    else:
+        models = []
+        for key, label in (("seven_day_opus", "Opus"), ("seven_day_sonnet", "Sonnet")):
+            window = claude_bucket(data.get(key))
+            if window is None:
+                continue
+            models.append({
+                "label": label,
+                "pct": window["pct"],
+                "resetsAt": window["resetsAt"],
+                "key": _model_alert_key(label),
+            })
+    extra = None
+    raw_extra = data.get("extra_usage")
+    if isinstance(raw_extra, dict) and raw_extra.get("is_enabled") is True:
+        extra = claude_bucket(raw_extra)
+    if session is None and week is None and not models and extra is None:
+        raise RuntimeError("当前账号没有订阅额度数据")
+    return {"session": session, "week": week, "models": models, "extra": extra}
+
+
+def claude_interpret(status, data):
+    """把 HTTP 结果收成 JSON，或抛出凭证错误 / 普通错误。权限错误先于 401/403。"""
+    err_type = None
+    err_message = ""
+    if isinstance(data, dict):
+        err = data.get("error")
+        if isinstance(err, dict):
+            err_type = err.get("type")
+            err_message = err.get("message") or ""
+        elif data.get("type") == "error":
+            err_type = "error"
+    if err_type == "permission_error":
+        raise CredentialError("没有订阅用量权限（%s）" % (err_message or "该组织不能查询用量"))
+    if err_type in ("authentication_error", "unauthorized") or status in (401, 403):
+        raise CredentialError("Claude 密钥已失效（登录已过期或已退出）")
+    if err_type:
+        raise RuntimeError(err_message or "Claude 接口返回错误")
+    if status >= 400:
+        raise RuntimeError("HTTP %s" % status)
+    if data is None:
+        raise CredentialError("Claude 密钥已失效（接口没有返回额度数据）")
+    return data
+
+
+def claude_request(url, session_key):
+    headers = {
+        "Accept": "application/json",
+        "Cookie": "sessionKey=" + session_key,
+        "User-Agent": "AI-Quota-Bar",
+    }
+    request = urllib.request.Request(url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            raw = response.read().decode("utf-8", errors="replace")
+            status = getattr(response, "status", 200)
+    except urllib.error.HTTPError as exc:
+        raw = exc.read().decode("utf-8", errors="replace")
+        status = exc.code
+    except urllib.error.URLError as exc:
+        raise RuntimeError("网络不可达（%s）" % exc.reason)
+    try:
+        data = json.loads(raw) if raw.strip() else None
+    except ValueError:
+        data = None
+    return claude_interpret(status, data)
+
+
+def fetch_claude_usage(session_key, request=None):
+    request = request or claude_request
+    orgs = request(CLAUDE_ORGS_URL, session_key)
+    uuid = select_claude_org(iter_claude_orgs(orgs))
+    if not uuid:
+        raise CredentialError(
+            "未找到订阅组织（需要 claude.ai 的 chat 组织，不是 API 控制台）")
+    usage = request(CLAUDE_USAGE_URL % uuid, session_key)
+    return parse_claude_usage(usage)
+
+
+def claude_summary(parsed):
+    parts = []
+    if parsed.get("session"):
+        parts.append("5小时 %.1f%%" % parsed["session"]["pct"])
+    if parsed.get("week"):
+        parts.append("周额度 %.1f%%" % parsed["week"]["pct"])
+    for model in parsed.get("models") or []:
+        parts.append("%s %.1f%%" % (model["label"], model["pct"]))
+    if parsed.get("extra"):
+        parts.append("额外用量 %.1f%%" % parsed["extra"]["pct"])
+    return " · ".join(parts) if parts else "已连通，但没有百分比"
+
+
+def verify_claude_key(raw):
+    """校验待配置的 sessionKey。只验证，不写 Keychain。"""
+    secret = normalize_claude_session(raw)
+    error = claude_session_format_error(secret)
+    if error:
+        return {"ok": False, "error": error}
+    try:
+        parsed = fetch_claude_usage(secret)
+    except CredentialError as exc:
+        return {"ok": False, "error": str(exc)}
+    except RuntimeError as exc:
+        return {"ok": False, "error": str(exc)}
+    return {"ok": True, "summary": claude_summary(parsed)}
+
+
+def fetch_claude(service):
+    key = read_claude_key(service)
+    parsed = fetch_claude_usage(key)
+    parsed["ts"] = time.time()
+    parsed["error"] = None
+    parsed["credId"] = cred_id(key)
+    return parsed
+
+
+def claude_enabled(cfg):
+    section = cfg.get("claude") if isinstance(cfg, dict) else None
+    if not isinstance(section, dict) or "enabled" not in section:
+        return True
+    return bool(section.get("enabled"))
+
+
+def claude_service_name(cfg):
+    section = cfg.get("claude") if isinstance(cfg, dict) else None
+    name = section.get("keychainService") if isinstance(section, dict) else None
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+    return CLAUDE_KEYCHAIN_SERVICE
+
+
+def _window_pct(window):
+    if not isinstance(window, dict) or window.get("pct") is None:
+        return None
+    try:
+        pct = float(window.get("pct"))
+    except (TypeError, ValueError):
+        return None
+    if pct != pct or pct < 0 or pct in (float("inf"), float("-inf")):
+        return None
+    return pct
+
+
+def claude_primary_pcts(claude):
+    """菜单栏上展示的百分比。优先 5 小时和周额度；都没有时才退到模型或额外用量。"""
+    if not isinstance(claude, dict) or claude.get("error"):
+        return []
+    pcts = []
+    for key in ("session", "week"):
+        pct = _window_pct(claude.get(key))
+        if pct is not None:
+            pcts.append(pct)
+    if pcts:
+        return pcts
+    for model in claude.get("models") or []:
+        pct = _window_pct(model)
+        if pct is not None:
+            pcts.append(pct)
+        if len(pcts) == 2:
+            break
+    if pcts:
+        return pcts
+    extra = _window_pct(claude.get("extra"))
+    return [] if extra is None else [extra]
+
+
+def claude_column_value(pcts):
+    if len(pcts) >= 2:
+        return "%d%%\u200a/\u200a%d%%" % (int(round(pcts[0])), int(round(pcts[1])))
+    if pcts:
+        return "%d%%" % int(round(pcts[0]))
+    return "--"
 
 
 # --------------------------------------------------------------------------
@@ -719,7 +1080,7 @@ def short_reason(text):
     """
     text = (text or "").strip()
     # 去掉数据源名字：避免「Cursor 不可用 · 未配置 Cursor token」这种重复
-    text = text.replace("Cursor ", "").replace("DeepSeek ", "")
+    text = text.replace("Cursor ", "").replace("DeepSeek ", "").replace("Claude ", "")
     for sep in ("（", "(", "："):
         if sep in text:
             text = text.split(sep)[0]
@@ -728,7 +1089,8 @@ def short_reason(text):
 
 def build_payload(cfg, cursor, cursor_err, cursor_stale,
                   deepseek, deepseek_err, deepseek_stale,
-                  codex, codex_err, codex_stale):
+                  codex, codex_err, codex_stale,
+                  claude=None, claude_err=None, claude_stale=False):
     """结构化输出：菜单栏多列、下拉菜单结构，均由原生 App 按本格式渲染。"""
     warn = float(cfg["thresholds"]["warn"])
     danger = float(cfg["thresholds"]["danger"])
@@ -746,6 +1108,20 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
             "value": "%d%%\u200a/\u200a%d%%" % (int(round(primary_pct)),
                                                  int(round(secondary_pct))),
             "color": COLOR[level(max(primary_pct, secondary_pct), warn, danger)],
+        })
+    claude_on = claude_enabled(cfg)
+    claude_pcts = claude_primary_pcts(claude) if claude_on else []
+    if claude_on and claude_pcts:
+        columns.append({
+            "label": "Claude",
+            "value": claude_column_value(claude_pcts),
+            "color": COLOR[level(max(claude_pcts), warn, danger)],
+        })
+    elif claude_on and (claude_err or (claude or {}).get("error")):
+        columns.append({
+            "label": "Claude",
+            "value": "--",
+            "color": COLOR["danger"],
         })
     if cursor:
         models_pct = cursor.get("modelsPct", 0.0)
@@ -818,7 +1194,7 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
             # 与 href（打开链接）/ refresh（重取数据）并列
             entry["action"] = action
         if service:
-            # 动作的附加参数（只有 DeepSeek 需要：Keychain 服务名可配置）
+            # 动作的附加参数（DeepSeek / Claude 的 Keychain 服务名可配置）
             entry["service"] = service
         return entry
 
@@ -861,6 +1237,59 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
         menu.append(separator())
         menu.append(item("ChatGPT Plus 读取失败", color=COLOR["danger"]))
         menu.append(sub(codex_err, color=COLOR["muted"], size=12))
+
+    if claude_on:
+        claude_service = claude_service_name(cfg)
+        claude_rows = []
+        if isinstance(claude, dict) and not claude.get("error"):
+            if claude.get("session"):
+                claude_rows.append(("5小时额度", claude["session"]))
+            if claude.get("week"):
+                claude_rows.append(("周额度", claude["week"]))
+            for model in claude.get("models") or []:
+                if isinstance(model, dict) and model.get("pct") is not None:
+                    claude_rows.append((model.get("label") or "模型", model))
+            if claude.get("extra"):
+                claude_rows.append(("额外用量", claude["extra"]))
+        if claude_rows:
+            menu.append(separator())
+            tabs = [15, 125, 178]
+            menu.append({
+                "kind": "item", "mono": True, "tabs": tabs,
+                "segments": [{"text": "Claude", "color": None}],
+            })
+            for label, window in claude_rows:
+                pct = _window_pct(window)
+                if pct is None:
+                    continue
+                row = "\t%s\t%5.1f%%" % (_clean_label(label, "额度"), pct)
+                if show_bars:
+                    row += "\t" + bar(pct, width)
+                menu.append(item(row, color=COLOR[level(pct, warn, danger)],
+                                 mono=True, tabs=tabs))
+                resets_at = window.get("resetsAt") or 0
+                if resets_at:
+                    menu.append(item(
+                        "\t重置时间  %s · %s" % (fmt_clock(resets_at),
+                                                 countdown(resets_at * 1000,
+                                                           with_minutes=False)),
+                        color=COLOR["muted"], size=12, tabs=[15]))
+            menu.append(item("\t更换密钥", action="configure-claude-key",
+                             service=claude_service, tabs=[15]))
+        else:
+            shown_err = claude_err or (claude or {}).get("error")
+            if shown_err or isinstance(claude, dict):
+                menu.append(separator())
+                menu.append({
+                    "kind": "item",
+                    "segments": [
+                        {"text": "Claude 不可用", "color": COLOR["danger"]},
+                        {"text": " · " + short_reason(shown_err or "读取失败"),
+                         "color": COLOR["muted"]},
+                    ],
+                })
+                menu.append(item("配置 Claude 密钥", action="configure-claude-key",
+                                 service=claude_service))
 
     if cursor:
         menu.append(separator())
@@ -1012,9 +1441,10 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
                              service=cfg["deepseek"]["keychainService"], tabs=[15]))
 
     menu.append(separator())
-    if cursor_stale or deepseek_stale or codex_stale:
+    if cursor_stale or deepseek_stale or codex_stale or claude_stale:
         menu.append(item("数据为缓存值（刷新失败）", color=COLOR["warn"], size=12))
     menu.append(item("前往 ChatGPT 用量面板", href=CODEX_USAGE_URL))
+    menu.append(item("前往 Claude 用量页", href=CLAUDE_USAGE_PAGE))
     menu.append(item("前往 Cursor 用量面板",
                      href="https://cursor.com/dashboard?tab=spending"))
     menu.append(item("前往 DeepSeek 用量面板", href="https://platform.deepseek.com/usage"))
@@ -1022,7 +1452,7 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
     # 字号与「前往 xxx」行一致（不指定 size，用系统默认）。
     # 时间用 muted 灰；「· 手动刷新」不给颜色——可点项的无色段由系统渲染，
     # hover 自动反白（见 main.swift buildMenu 的 segments 分支）
-    data_ts = latest_ts(cursor, deepseek, codex)
+    data_ts = latest_ts(cursor, deepseek, codex, claude if claude_on else None)
     if data_ts is None:
         updated_text = "暂无数据"
     else:
@@ -1041,13 +1471,15 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
     try:
         import notify
         notify_on = notify.notifications_enabled(cfg)
-        alert_list = notify.collect_alerts(cfg, cursor, deepseek, codex, level)
+        alert_list = notify.collect_alerts(
+            cfg, cursor, deepseek, codex, level,
+            claude if claude_on else None)
     except Exception:
         alert_list = []
 
     return {
         "updatedAtEpoch": time.time(),
-        "stale": bool(cursor_stale or deepseek_stale or codex_stale),
+        "stale": bool(cursor_stale or deepseek_stale or codex_stale or claude_stale),
         "columns": columns,
         "menu": menu,
         "notificationsEnabled": notify_on,
@@ -1055,12 +1487,262 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
     }
 
 
+def _menu_blob(payload):
+    parts = []
+    for entry in payload.get("menu") or []:
+        if entry.get("title"):
+            parts.append(entry["title"])
+        for segment in entry.get("segments") or []:
+            parts.append(segment.get("text") or "")
+        if entry.get("action"):
+            parts.append(entry["action"])
+        if entry.get("href"):
+            parts.append(entry["href"])
+    return "\n".join(parts)
+
+
+def self_test():
+    """不联网、不读 Keychain。覆盖未配置、关闭数据源，以及单源失败不影响其它列。"""
+    failures = []
+
+    def expect(condition, message):
+        if not condition:
+            failures.append(message)
+
+    cfg = deep_merge(DEFAULT_CONFIG, {})
+    expect(claude_enabled(cfg) is True, "缺省应显示 Claude")
+    expect(claude_service_name(cfg) == CLAUDE_KEYCHAIN_SERVICE, "缺省钥匙串服务名不对")
+    expect(claude_enabled({"claude": {"enabled": False}}) is False, "enabled false 应关闭")
+    expect(claude_enabled({}) is True, "没有 claude 段时按打开处理")
+    expect(claude_service_name({"claude": {"keychainService": "  custom  "}}) == "custom",
+           "钥匙串服务名应去掉空白")
+
+    raw = "Cookie: sessionKey=sk-ant-sid01-abc_DEF-123; other=nope"
+    expect(normalize_claude_session(raw) == "sk-ant-sid01-abc_DEF-123",
+           "应从 Cookie 头里取出 sessionKey")
+    expect(normalize_claude_session("  'sk-ant-sid01-plain'  ") == "sk-ant-sid01-plain",
+           "应去掉引号")
+    bad = verify_claude_key("sessionKey=sk-ant-api01-SECRETVALUE")
+    expect(bad.get("ok") is False and "sk-ant-sid" in (bad.get("error") or ""),
+           "API Key 应在发请求前被拒绝：%r" % (bad,))
+    expect("SECRETVALUE" not in json.dumps(bad, ensure_ascii=False), "格式错误不应回显密钥")
+    empty = verify_claude_key("   ")
+    expect(empty.get("ok") is False and "没有读到" in (empty.get("error") or ""),
+           "空白应提示没有内容")
+
+    expect(claude_bucket({"utilization": None, "resets_at": "2026-01-01T00:00:00Z"}) is None,
+           "缺失的百分比不能当成 0")
+    expect(claude_bucket({"percent": 0, "resets_at": None})["pct"] == 0, "真实的 0% 要保留")
+    expect(select_claude_org([
+        {"uuid": "11111111-1111-1111-1111-111111111111", "capabilities": ["api"]},
+        {"uuid": "../not-a-uuid", "capabilities": ["chat"]},
+        {"uuid": "22222222-2222-2222-2222-222222222222", "capabilities": ["chat"],
+         "billing_type": "stripe_subscription"},
+        {"uuid": "33333333-3333-3333-3333-333333333333", "capabilities": ["chat"]},
+    ]) == "22222222-2222-2222-2222-222222222222", "应选带 chat 的订阅组织，跳过 API 组织和非法 id")
+    expect(select_claude_org([{"uuid": "11111111-1111-1111-1111-111111111111",
+                               "capabilities": ["api"]}]) is None, "只有 API 组织时不硬选")
+    wrapped = iter_claude_orgs({"data": [{"uuid": "abc"}]})
+    expect(len(wrapped) == 1 and wrapped[0]["uuid"] == "abc", "组织列表可以包在 data 里")
+
+    try:
+        parse_claude_usage({"five_hour": None, "seven_day": None,
+                            "extra_usage": {"is_enabled": False, "utilization": 80}})
+        expect(False, "没有窗口时应失败，而不是显示 0%")
+    except RuntimeError as exc:
+        expect("没有订阅额度数据" in str(exc), "空用量的文案不对：%s" % exc)
+
+    parsed = parse_claude_usage({
+        "five_hour": None,
+        "seven_day": {"utilization": 1, "resets_at": None},
+        "seven_day_opus": {"utilization": 9, "resets_at": "2026-11-12T00:00:00Z"},
+        "limits": [
+            {"kind": "session", "percent": 15, "resets_at": "2026-11-10T01:00:00Z"},
+            {"kind": "weekly_scoped", "percent": 7, "resets_at": "2026-11-16T00:00:00Z",
+             "scope": {"model": {"display_name": "Fable"}}},
+        ],
+        "extra_usage": {"is_enabled": False, "utilization": 99},
+    })
+    expect(parsed["session"]["pct"] == 15, "five_hour 缺失时用 limits.session")
+    expect(parsed["week"]["pct"] == 1, "已有的 seven_day 不被 limits 覆盖")
+    expect([item["label"] for item in parsed["models"]] == ["Fable"],
+           "有 weekly_scoped 时不再重复旧的 Opus 字段")
+    expect(parsed["extra"] is None, "未开启的额外用量不展示")
+    expect(parsed["session"]["resetsAt"] > 0, "session 重置时间应能解析")
+
+    legacy = parse_claude_usage({
+        "five_hour": {"utilization": 4, "resets_at": None},
+        "seven_day": {"utilization": 5, "resets_at": None},
+        "seven_day_sonnet": {"utilization": 0, "resets_at": None},
+        "seven_day_opus": None,
+    })
+    expect(legacy["models"][0]["label"] == "Sonnet" and legacy["models"][0]["pct"] == 0,
+           "没有 limits 时保留旧的模型周额度，0% 也要")
+
+    seen = []
+
+    def fake_request(url, key):
+        seen.append((url, key))
+        if url == CLAUDE_ORGS_URL:
+            return [
+                {"uuid": "11111111-1111-1111-1111-111111111111", "capabilities": ["api"]},
+                {"uuid": "22222222-2222-2222-2222-222222222222", "capabilities": ["chat"],
+                 "billing_type": "stripe_subscription"},
+            ]
+        return {
+            "five_hour": {"utilization": 12, "resets_at": "2026-11-10T00:00:00Z"},
+            "seven_day": {"utilization": 34, "resets_at": "2026-11-16T00:00:00Z"},
+        }
+
+    usage = fetch_claude_usage("sk-ant-sid01-secret", request=fake_request)
+    expect(len(seen) == 2 and seen[1][0].endswith(
+        "/22222222-2222-2222-2222-222222222222/usage"), "应请求选中的组织用量")
+    expect(all("secret" not in url for url, _key in seen), "请求地址不能带上密钥")
+    expect("secret" not in json.dumps(usage), "解析结果不能带上密钥")
+    expect(usage["session"]["pct"] == 12 and usage["week"]["pct"] == 34, "用量百分比不对")
+
+    def interpret_error(status, data):
+        try:
+            claude_interpret(status, data)
+        except Exception as exc:
+            return type(exc), str(exc)
+        return None, ""
+
+    kind, text = interpret_error(401, None)
+    expect(kind is CredentialError and "密钥已失效" in text, "401 应是密钥失效")
+    kind, text = interpret_error(403, {
+        "type": "error",
+        "error": {"type": "permission_error", "message": "Invalid authorization"},
+    })
+    expect(kind is CredentialError and text.startswith("没有订阅用量权限"),
+           "权限错误不能写成密钥失效：%s" % text)
+    kind, text = interpret_error(429, {"error": "slow down"})
+    expect(kind is RuntimeError and text == "HTTP 429", "429 应留给缓存降级：%s" % text)
+    expect(claude_interpret(200, [{"uuid": "ok"}]) == [{"uuid": "ok"}], "200 的 JSON 应原样返回")
+
+    def raise_auth():
+        raise CredentialError("未配置密钥")
+
+    def raise_down():
+        raise RuntimeError("HTTP 429")
+
+    missing, missing_err, missing_stale, missing_drop = resolve(
+        True, raise_auth, {"ts": 1, "session": {"pct": 8}}, False)
+    expect(missing is None and missing_drop and not missing_stale and "未配置" in missing_err,
+           "未配置不能继续显示旧百分比")
+    cached, down_err, down_stale, down_drop = resolve(
+        True, raise_down,
+        {"ts": 1, "session": {"pct": 8}, "week": {"pct": 9}, "models": [], "extra": None},
+        False)
+    expect(down_stale and not down_drop and cached["session"]["pct"] == 8,
+           "网络失败应降级到这份缓存")
+    sibling, sibling_err, _, _ = resolve(
+        True, lambda: {"total": "8.5", "currency": "CNY", "available": True}, None, False)
+    expect(sibling_err is None and sibling["total"] == "8.5", "前一个源失败后，下一个源仍要取数")
+    state = {"cursor": {"keep": True}, "claude": {"session": {"pct": 1}}}
+    if missing_drop:
+        state.pop("claude", None)
+    expect("cursor" in state and "claude" not in state, "丢掉 Claude 缓存时不能动其它源")
+
+    codex = {"primaryPct": 4, "secondaryPct": 5, "primaryResetsAt": 0, "secondaryResetsAt": 0}
+    deepseek = {"total": "30", "currency": "CNY", "available": True, "error": None, "ts": 3}
+    unconfigured = build_payload(
+        cfg, None, None, False, deepseek, None, False, codex, None, False,
+        None, "未配置密钥", False)
+    labels = [column["label"] for column in unconfigured["columns"]]
+    claude_col = [column for column in unconfigured["columns"] if column["label"] == "Claude"]
+    expect(labels[:2] == ["ChatGPT", "Claude"] and "DeepSeek" in labels,
+           "未配置时 Claude 列仍占位，其它列还在：%r" % (labels,))
+    expect(len(claude_col) == 1 and claude_col[0]["value"] == "--"
+           and claude_col[0]["color"] == COLOR["danger"], "未配置不能显示成百分比")
+    blob = _menu_blob(unconfigured)
+    expect("Claude 不可用" in blob and "未配置密钥" in blob and "configure-claude-key" in blob,
+           "未配置提示或入口不对：%s" % blob)
+    expect("ChatGPT Plus" in blob and "余额" in blob, "未配置 Claude 时其它区块应还在")
+    expect(CLAUDE_USAGE_PAGE in blob, "下拉应有 Claude 用量页")
+
+    off = deep_merge(cfg, {"claude": {"enabled": False}})
+    hidden = build_payload(
+        off, None, None, False, deepseek, None, False, codex, None, False,
+        {"session": {"pct": 90, "resetsAt": 1}, "week": {"pct": 91, "resetsAt": 2},
+         "models": [], "extra": None},
+        "未配置密钥", False)
+    hidden_labels = [column["label"] for column in hidden["columns"]]
+    expect("Claude" not in hidden_labels, "关掉之后菜单栏不能再出现 Claude：%r" % (hidden_labels,))
+    hidden_blob = _menu_blob(hidden)
+    expect("configure-claude-key" not in hidden_blob and "Claude 不可用" not in hidden_blob,
+           "关掉之后下拉不能再出现 Claude 区块")
+    expect(not any(segment.get("text") == "Claude"
+                   for entry in hidden["menu"]
+                   for segment in (entry.get("segments") or [])),
+           "关掉之后不能再出现 Claude 标题")
+    expect("ChatGPT Plus" in hidden_blob and CLAUDE_USAGE_PAGE in hidden_blob,
+           "关掉 Claude 不应拿掉其它区块和用量页链接")
+    expect(all(item["key"].startswith("codex.") for item in hidden["alerts"]),
+           "关掉之后不能再为 Claude 产生通知：%r" % (hidden["alerts"],))
+
+    high = {
+        "session": {"pct": 60, "resetsAt": 111},
+        "week": {"pct": 91, "resetsAt": 222},
+        "models": [{"label": "Fable", "pct": 80, "resetsAt": 333, "key": "claude.model.fable.test"}],
+        "extra": {"pct": 10, "resetsAt": 0},
+        "error": None,
+        "ts": 50,
+    }
+    shown = build_payload(
+        cfg, None, "未配置 Cursor token", False, deepseek, None, False,
+        codex, None, False, high, None, True)
+    shown_labels = [(column["label"], column["value"]) for column in shown["columns"]]
+    expect(shown_labels[0][0] == "ChatGPT" and shown_labels[1] == (
+        "Claude", "60%\u200a/\u200a91%"), "菜单栏应是 5 小时 / 周额度：%r" % (shown_labels,))
+    expect(shown["columns"][1]["color"] == COLOR["danger"], "较高的一格达到危险阈值")
+    expect(any(column["label"] == "Cursor" and column["value"] == "--"
+               for column in shown["columns"]), "Cursor 失败时仍占位")
+    expect(any(column["label"] == "DeepSeek" for column in shown["columns"]),
+           "DeepSeek 不应被 Cursor 或 Claude 的状态影响")
+    shown_blob = _menu_blob(shown)
+    expect("5小时额度" in shown_blob and "周额度" in shown_blob and "Fable" in shown_blob
+           and "额外用量" in shown_blob and "\u2588" in shown_blob and "重置时间" in shown_blob,
+           "下拉进度或模型行缺失：%s" % shown_blob)
+    expect("Cursor 不可用" in shown_blob and "数据为缓存值" in shown_blob,
+           "其它源的失败和缓存提示应还在")
+    alert_keys = [item["key"] for item in shown["alerts"]]
+    expect("claude.session" in alert_keys and "claude.week" in alert_keys
+           and "claude.model.fable.test" in alert_keys and "claude.extra" not in alert_keys,
+           "只提醒越线的 Claude 窗口：%r" % (alert_keys,))
+    by_key = {item["key"]: item for item in shown["alerts"]}
+    expect(by_key["claude.session"]["level"] == "warn" and by_key["claude.session"]["cycle"] == "111",
+           "5 小时 60%% 走原来的预警阈值")
+    expect(by_key["claude.week"]["level"] == "danger" and by_key["claude.week"]["source"] == "Claude",
+           "周额度 91%% 走原来的危险阈值")
+
+    only_week = build_payload(
+        cfg, None, None, False, None, None, False, None, None, False,
+        {"week": {"pct": 12.2, "resetsAt": 0}, "session": None, "models": [], "extra": None},
+        None, False)
+    week_col = [column for column in only_week["columns"] if column["label"] == "Claude"]
+    only_blob = _menu_blob(only_week)
+    expect(len(week_col) == 1 and week_col[0]["value"] == "12%",
+           "只有周额度时不补一格 0%%：%r" % (week_col,))
+    expect("周额度" in only_blob and "5小时额度" not in only_blob,
+           "没有的 5 小时额度不应画出来")
+
+    if failures:
+        sys.stderr.write("\n".join(failures) + "\n")
+        return 1
+    sys.stdout.write("report self-test ok\n")
+    return 0
+
+
 def main():
     # 校验模式：凭证从 stdin 读入，输出一行 JSON。
     # App 的配置弹窗与 scripts/*.sh 都走这里，避免出现两套判断。
     argv = sys.argv[1:]
+    if argv == ["--self-test"]:
+        sys.exit(self_test())
     for flag, verifier in (("--verify-cursor-token", verify_cursor_token),
-                           ("--verify-deepseek-key", verify_deepseek_key)):
+                           ("--verify-deepseek-key", verify_deepseek_key),
+                           ("--verify-claude-key", verify_claude_key)):
         if flag in argv:
             result = verifier(sys.stdin.read())
             sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
@@ -1098,6 +1780,9 @@ def main():
         if not local:
             if key == "cursor":
                 current = current_cred_id(read_cursor_token)
+            elif key == "claude":
+                current = current_cred_id(
+                    lambda: read_claude_key(claude_service_name(cfg)))
             else:
                 service = cfg["deepseek"]["keychainService"]
                 current = current_cred_id(lambda: read_deepseek_key(service))
@@ -1116,6 +1801,10 @@ def main():
         bool(cfg["deepseek"]["enabled"]),
         lambda: fetch_deepseek(cfg["deepseek"]["keychainService"]),
         state.get("deepseek"), is_fresh("deepseek"))
+    claude, claude_err, claude_stale, drop_claude = resolve(
+        claude_enabled(cfg),
+        lambda: fetch_claude(claude_service_name(cfg)),
+        state.get("claude"), is_fresh("claude"))
     codex, codex_err, codex_stale, drop_codex = resolve(
         bool(cfg["codex"]["enabled"]), fetch_codex, state.get("codex"),
         is_fresh("codex", local=True))
@@ -1127,7 +1816,8 @@ def main():
     for key, data, drop in (
             ("cursor", cursor, drop_cursor),
             ("deepseek", deepseek, drop_deepseek),
-            ("codex", codex, drop_codex)):
+            ("codex", codex, drop_codex),
+            ("claude", claude, drop_claude)):
         if drop:
             state.pop(key, None)
         elif data is not None and not data.get("error"):
@@ -1137,7 +1827,8 @@ def main():
 
     payload = build_payload(cfg, cursor, cursor_err, cursor_stale,
                             deepseek, deepseek_err, deepseek_stale,
-                            codex, codex_err, codex_stale)
+                            codex, codex_err, codex_stale,
+                            claude, claude_err, claude_stale)
     sys.stdout.write(json.dumps(payload, ensure_ascii=False) + "\n")
 
 

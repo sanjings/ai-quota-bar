@@ -166,11 +166,20 @@ def _deepseek_alert(deepseek, low_balance):
     return alert
 
 
-def collect_alerts(cfg, cursor, deepseek, codex, level_fn):
+def _claude_window_alert(level_fn, metric, key, window, warn, danger):
+    if not isinstance(window, dict) or window.get("pct") is None:
+        return None
+    return _usage_alert(
+        level_fn, "Claude", metric, key, window.get("pct"),
+        window.get("resetsAt") or 0, warn, danger)
+
+
+def collect_alerts(cfg, cursor, deepseek, codex, level_fn, claude=None):
     """当前越线项。level_fn 必须是 report.level，百分比比较不在这里重写。
 
     合计、两个模型池、Grok Bot 各自一条。菜单栏那一列的颜色只用池子和
     Grok Bot 的最大值，合计仍单独提醒，因为下拉标题会按合计着色。
+    Claude 的 5 小时、周额度、模型周额度和额外用量也走同一套百分比阈值。
     """
     warn = float(cfg["thresholds"]["warn"])
     danger = float(cfg["thresholds"]["danger"])
@@ -209,6 +218,20 @@ def collect_alerts(cfg, cursor, deepseek, codex, level_fn):
             add(_usage_alert(
                 level_fn, "Cursor", "Grok Bot", "cursor.grok",
                 grok.get("pct"), grok.get("resetsAt") or 0, warn, danger))
+
+    if isinstance(claude, dict) and not claude.get("error"):
+        add(_claude_window_alert(
+            level_fn, "5小时额度", "claude.session", claude.get("session"), warn, danger))
+        add(_claude_window_alert(
+            level_fn, "周额度", "claude.week", claude.get("week"), warn, danger))
+        for model in claude.get("models") or []:
+            if not isinstance(model, dict):
+                continue
+            add(_claude_window_alert(
+                level_fn, model.get("label") or "模型",
+                model.get("key") or "claude.model", model, warn, danger))
+        add(_claude_window_alert(
+            level_fn, "额外用量", "claude.extra", claude.get("extra"), warn, danger))
 
     add(_deepseek_alert(deepseek, low_balance))
     return alerts

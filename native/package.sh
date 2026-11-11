@@ -97,7 +97,7 @@ Gatekeeper：
 配置与缓存：
   同目录的 config.json 可以改，下一轮刷新生效。
   cache/ 会在第一次取数后出现。
-  Cursor / DeepSeek 的凭证写在本机钥匙串里，说明见 SECURITY.md。
+  Cursor / DeepSeek / Claude 的凭证写在本机钥匙串里，说明见 SECURITY.md。
   菜单里的配置步骤和源码安装相同，见：
   https://github.com/sanjings/ai-quota-bar/blob/main/README.md
 

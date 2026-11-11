@@ -1444,7 +1444,7 @@ def build_payload(cfg, cursor, cursor_err, cursor_stale,
     if cursor_stale or deepseek_stale or codex_stale or claude_stale:
         menu.append(item("数据为缓存值（刷新失败）", color=COLOR["warn"], size=12))
     menu.append(item("前往 ChatGPT 用量面板", href=CODEX_USAGE_URL))
-    menu.append(item("前往 Claude 用量页", href=CLAUDE_USAGE_PAGE))
+    menu.append(item("前往 Claude 用量面板", href=CLAUDE_USAGE_PAGE))
     menu.append(item("前往 Cursor 用量面板",
                      href="https://cursor.com/dashboard?tab=spending"))
     menu.append(item("前往 DeepSeek 用量面板", href="https://platform.deepseek.com/usage"))

@@ -30,6 +30,9 @@ import sys
 # 阈值、级别或重置周期变了不等这 30 分钟：调低阈值后下一轮就要能收到。
 # 一直停在同一周期、同一阈值上则不会因为时间到了再发。
 REARM_SECONDS = 30 * 60
+# 官方重置时间会在几秒内来回跳。差在 5 分钟内仍算同一周期。
+# shortcut: 最短真实窗口是 5 小时；出现更短的窗口时再收紧这段。
+CYCLE_SLACK_SECONDS = 300
 
 
 def notifications_enabled(cfg):
@@ -69,6 +72,20 @@ def cycle_token(value):
     if abs(number - nearest) < 1e-6 and abs(nearest) <= 2 ** 53:
         return str(int(nearest))
     return "%.6f" % number
+
+
+def same_notice(previous_fp, new_fp):
+    """同一项目、同一级别、同一阈值，且重置时间差在 5 分钟内。"""
+    if previous_fp == new_fp:
+        return True
+    old = str(previous_fp).split("|")
+    new = str(new_fp).split("|")
+    if len(old) != 4 or old[:3] != new[:3]:
+        return False
+    try:
+        return abs(float(old[3]) - float(new[3])) <= CYCLE_SLACK_SECONDS
+    except ValueError:
+        return False
 
 
 def fingerprint(alert):
@@ -290,7 +307,7 @@ def plan_notifications(alerts, ledger, enabled, now, cooldown):
         for key, fp, alert in indexed:
             seen.add(key)
             previous = sent.get(key)
-            if previous and previous["fingerprint"] == fp:
+            if previous and same_notice(previous["fingerprint"], fp):
                 continue
             item = dict(alert)
             item["id"] = fp
@@ -540,6 +557,18 @@ def self_test():
     }, level)
     cycled, _ = plan_notifications(new_cycle, ledger, True, 1_010, REARM_SECONDS)
     expect(len(cycled) == 1 and cycled[0]["cycle"] == "5000", "新周期立刻再发，不等冷却")
+
+    jitter_base = collect_alerts(cfg, None, None, {
+        "primaryPct": 57, "primaryResetsAt": 0,
+        "secondaryPct": 57, "secondaryResetsAt": 1794984816,
+    }, level)
+    _, jitter_ledger = plan_notifications(jitter_base, {"sent": {}}, True, 3_000, REARM_SECONDS)
+    jitter_next = collect_alerts(cfg, None, None, {
+        "primaryPct": 57, "primaryResetsAt": 0,
+        "secondaryPct": 57, "secondaryResetsAt": 1794984823,
+    }, level)
+    jitter_again, _ = plan_notifications(jitter_next, jitter_ledger, True, 3_060, REARM_SECONDS)
+    expect(jitter_again == [], "重置时间差几秒不再发")
 
     # 开关关掉：不发，也不把当前越线记成已发。
     quiet_deliver, quiet_ledger = plan_notifications(primary, {"sent": {}}, False, 3_000, REARM_SECONDS)
